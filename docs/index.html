@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>PSA Caución Bot – Dashboard</title>
+  <style>
+    body{font-family:system-ui,Segoe UI,Roboto,Arial;max-width:900px;margin:24px auto;padding:0 16px;line-height:1.35}
+    .card{border:1px solid #ddd;border-radius:12px;padding:16px;margin:12px 0}
+    .muted{color:#666}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:8px;border-bottom:1px solid #eee;text-align:left}
+    .kpi{display:flex;gap:12px;flex-wrap:wrap}
+    .kpi .card{flex:1;min-width:240px}
+    code{background:#f6f6f6;padding:2px 6px;border-radius:6px}
+  </style>
+</head>
+<body>
+  <h1>PSA Caución Bot – Dashboard</h1>
+  <p class="muted">Datos públicos (BYMA vía PortfolioPersonal). Actualizado por GitHub Actions.</p>
+
+  <div class="kpi">
+    <div class="card">
+      <div class="muted">Última actualización</div>
+      <div id="ts">—</div>
+    </div>
+    <div class="card">
+      <div class="muted">Mejor plazo</div>
+      <div id="best">—</div>
+    </div>
+    <div class="card">
+      <div class="muted">Modo</div>
+      <div id="mode">—</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Tasas</h3>
+    <table>
+      <thead>
+        <tr><th>Plazo</th><th>Tasa</th></tr>
+      </thead>
+      <tbody id="rates"></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="muted">Fuente</div>
+    <div><a id="src" href="#" target="_blank" rel="noreferrer">—</a></div>
+  </div>
+
+  <p class="muted">Nota: el bot no ejecuta operaciones. Solo monitorea y alerta.</p>
+
+  <script>
+    async function run(){
+      const res = await fetch("./data/latest.json", {cache:"no-store"});
+      const d = await res.json();
+
+      document.getElementById("ts").textContent = d.timestamp || "—";
+      document.getElementById("mode").textContent = d.mode || "—";
+
+      const best = d.best ? `${d.best.tenor_days}D → ${Number(d.best.rate).toFixed(2)}%` : "—";
+      document.getElementById("best").textContent = best;
+
+      const src = document.getElementById("src");
+      src.textContent = d.source || "—";
+      src.href = d.source || "#";
+
+      const tbody = document.getElementById("rates");
+      tbody.innerHTML = "";
+      const rates = d.rates || {};
+      Object.keys(rates).sort((a,b)=>Number(a)-Number(b)).forEach(k=>{
+        const v = rates[k];
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${k}D</td><td>${v===null ? "—" : Number(v).toFixed(2)+"%"}</td>`;
+        tbody.appendChild(tr);
+      });
+    }
+    run().catch(()=>{});
+  </script>
+</body>
+</html>
