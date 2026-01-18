@@ -31,3 +31,5 @@ jobs:
           THRESH_HIGH: "40.0"
           THRESH_LOW: "35.0"
           DAILY_HOUR: "10"
+SUPER_HIGH: "42.0"
+CAPITAL_BASE: "38901078.37"
