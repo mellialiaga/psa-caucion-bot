@@ -13,12 +13,25 @@ CHAT_ID = os.environ["TG_CHAT_ID"]
 
 THRESH_HIGH = float(os.getenv("THRESH_HIGH", "40.0"))
 THRESH_LOW  = float(os.getenv("THRESH_LOW", "35.0"))
-SUPER_HIGH  = float(os.getenv("SUPER_HIGH", "42.0"))   # alerta premium
+SUPER_HIGH  = float(os.getenv("SUPER_HIGH", "42.0"))
+
 DAILY_HOUR  = int(os.getenv("DAILY_HOUR", "10"))
 
 CAPITAL_BASE = float(os.getenv("CAPITAL_BASE", "38901078.37"))
-DAYS_YEAR = int(os.getenv("DAYS_YEAR", "365"))         # 365 o 252
-DAYS_MONTH = int(os.getenv("DAYS_MONTH", "30"))        # proyección mensual simple
+
+# --- Fees (según tarifario BMB / BYMA) ---
+# BMB: Caución Colocador = 0,083% mensual (prorrata por día)
+BMB_FEE_MONTHLY = float(os.getenv("BMB_FEE_MONTHLY", "0.00083"))  # 0,083% => 0.00083
+
+# BYMA: gastos administración garantías = 0,045% sobre monto (por operación)
+BYMA_GARANTIA_FEE = float(os.getenv("BYMA_GARANTIA_FEE", "0.00045"))  # 0,045% => 0.00045
+
+# IVA sobre comisiones/aranceles (caución no está exenta)
+IVA = float(os.getenv("IVA", "0.21"))
+
+# Para cálculos
+DAYS_IN_YEAR = int(os.getenv("DAYS_IN_YEAR", "365"))
+DAYS_IN_MONTH = int(os.getenv("DAYS_IN_MONTH", "30"))  # prorrateo simple comisión mensual
 
 TZ = ZoneInfo("America/Argentina/Cordoba")
 STATE_PATH = Path(".state/state.json")
@@ -67,8 +80,40 @@ def trend_text(last_rate, rate):
         return f"⬇ baja (-{last_rate - rate:.2f})"
     return "➡ igual"
 
-def income(capital, tna, days_in_year):
-    return capital * (tna / 100.0) / days_in_year
+def gross_interest_daily(capital: float, tna: float) -> float:
+    return capital * (tna / 100.0) / DAYS_IN_YEAR
+
+def estimated_costs_daily(capital: float) -> float:
+    """
+    Estimación diaria para caución 1D:
+    - Comisión BMB colocador 0,083% mensual prorrateada 1/30
+    - BYMA garantía 0,045% por operación (1D -> diario)
+    - IVA sobre ambos
+    """
+    bmb_daily = capital * (BMB_FEE_MONTHLY / DAYS_IN_MONTH)
+    byma_daily = capital * BYMA_GARANTIA_FEE
+    subtotal = bmb_daily + byma_daily
+    return subtotal * (1.0 + IVA)
+
+def msg_financial_block(rate: float, trend: str) -> str:
+    gross = gross_interest_daily(CAPITAL_BASE, rate)
+    costs = estimated_costs_daily(CAPITAL_BASE)
+    net = gross - costs
+
+    # Señal rápida
+    if net > 0:
+        sign = "✅ Neto positivo"
+    else:
+        sign = "🧊 Neto negativo (costos > interés)"
+
+    return (
+        f"Tasa (TNA): {rate:.2f}%  | Tendencia: {trend}\n\n"
+        f"💰 Con {money(CAPITAL_BASE)} (estimación diaria):\n"
+        f"• Bruto: {money(gross)}\n"
+        f"• Costos: {money(costs)}\n"
+        f"• Neto: {money(net)}\n"
+        f"{sign}"
+    )
 
 # =========================
 # MAIN
@@ -87,15 +132,8 @@ def main():
             save_state(st)
         return
 
-    # Tendencia simple
     last_rate = st.get("last_rate")
     trend = trend_text(last_rate, rate)
-
-    # Ingresos estimados
-    daily_365 = income(CAPITAL_BASE, rate, 365)
-    daily_252 = income(CAPITAL_BASE, rate, 252)
-    month_365 = daily_365 * DAYS_MONTH
-    month_252 = daily_252 * DAYS_MONTH
 
     # Estado por umbrales
     state = "MID"
@@ -104,44 +142,35 @@ def main():
     elif rate <= THRESH_LOW:
         state = "LOW"
 
-    # Cruces (más inteligente que solo "estado cambió")
+    # Cruces
     crossed_high = rate >= THRESH_HIGH
     crossed_low  = rate <= THRESH_LOW
 
-    # ALERTA SUPER (si aplica)
+    # 🔥 Súper tasa
     if rate >= SUPER_HIGH and st.get("last_state") != "SUPER":
         send(
-            f"🔥 SÚPER TASA CAUCIÓN 1D\n"
-            f"Tasa (TNA): {rate:.2f}%  | Tendencia: {trend}\n\n"
-            f"💰 Con {money(CAPITAL_BASE)}:\n"
-            f"≈ {money(daily_365)}/día (365) | ≈ {money(daily_252)}/día (252)\n"
-            f"≈ {money(month_365)}/mes (30d) | ≈ {money(month_252)}/mes (30d)\n\n"
-            f"✅ Nivel MUY bueno para colocar"
+            "🔥 SÚPER TASA CAUCIÓN 1D\n\n"
+            + msg_financial_block(rate, trend)
+            + f"\n\nUmbrales: 🟢≥{THRESH_HIGH:.1f}% | ⚠️≤{THRESH_LOW:.1f}% | 🔥≥{SUPER_HIGH:.1f}%"
         )
         st["last_state"] = "SUPER"
 
-    # Cruce hacia arriba (pasa a >=40)
+    # 🟢 Cruce a oportunidad
     if crossed_high and not st.get("last_cross_high", False):
         send(
-            f"🟢 CRUCE A OPORTUNIDAD (≥ {THRESH_HIGH:.1f}%)\n"
-            f"Tasa (TNA): {rate:.2f}%  | Tendencia: {trend}\n\n"
-            f"💰 Con {money(CAPITAL_BASE)}:\n"
-            f"≈ {money(daily_365)}/día (365) | ≈ {money(daily_252)}/día (252)\n"
-            f"≈ {money(month_365)}/mes (30d) | ≈ {money(month_252)}/mes (30d)"
+            f"🟢 CRUCE A OPORTUNIDAD (≥ {THRESH_HIGH:.1f}%)\n\n"
+            + msg_financial_block(rate, trend)
         )
         st["last_cross_high"] = True
     if not crossed_high:
         st["last_cross_high"] = False
 
-    # Cruce hacia abajo (pasa a <=35)
+    # ⚠️ Cruce a warning
     if crossed_low and not st.get("last_cross_low", False):
         send(
-            f"⚠️ CRUCE A WARNING (≤ {THRESH_LOW:.1f}%)\n"
-            f"Tasa (TNA): {rate:.2f}%  | Tendencia: {trend}\n\n"
-            f"💰 Con {money(CAPITAL_BASE)}:\n"
-            f"≈ {money(daily_365)}/día (365) | ≈ {money(daily_252)}/día (252)\n"
-            f"≈ {money(month_365)}/mes (30d) | ≈ {money(month_252)}/mes (30d)\n\n"
-            f"👉 Evaluar alternativas"
+            f"⚠️ CRUCE A WARNING (≤ {THRESH_LOW:.1f}%)\n\n"
+            + msg_financial_block(rate, trend)
+            + "\n\n👉 Evaluar alternativas"
         )
         st["last_cross_low"] = True
     if not crossed_low:
@@ -150,41 +179,25 @@ def main():
     # Alertas por cambio de estado (respaldo)
     if state != st.get("last_state") and st.get("last_state") not in ("SUPER",):
         if state == "HIGH":
-            send(
-                f"🟢 OPORTUNIDAD CAUCIÓN 1D\n"
-                f"Tasa (TNA): {rate:.2f}%  | Tendencia: {trend}\n\n"
-                f"💰 Con {money(CAPITAL_BASE)}:\n"
-                f"≈ {money(daily_365)}/día (365) | ≈ {money(daily_252)}/día (252)\n"
-                f"≈ {money(month_365)}/mes (30d) | ≈ {money(month_252)}/mes (30d)"
-            )
+            send("🟢 OPORTUNIDAD CAUCIÓN 1D\n\n" + msg_financial_block(rate, trend))
         elif state == "LOW":
             send(
-                f"⚠️ WARNING CAUCIÓN 1D\n"
-                f"Tasa (TNA): {rate:.2f}%  | Tendencia: {trend}\n\n"
-                f"💰 Con {money(CAPITAL_BASE)}:\n"
-                f"≈ {money(daily_365)}/día (365) | ≈ {money(daily_252)}/día (252)\n"
-                f"≈ {money(month_365)}/mes (30d) | ≈ {money(month_252)}/mes (30d)\n\n"
-                f"👉 Evaluar alternativas"
+                "⚠️ WARNING CAUCIÓN 1D\n\n"
+                + msg_financial_block(rate, trend)
+                + "\n\n👉 Evaluar alternativas"
             )
         st["last_state"] = state
 
-    # Resumen diario (1 vez por día)
+    # 📊 Resumen diario
     today = now.strftime("%Y-%m-%d")
     if now.hour == DAILY_HOUR and st.get("last_daily") != today:
         send(
-            f"📊 Resumen diario Caución 1D\n"
-            f"Tasa (TNA): {rate:.2f}%  | Tendencia: {trend}\n\n"
-            f"💰 Con {money(CAPITAL_BASE)}:\n"
-            f"≈ {money(daily_365)}/día (365) | ≈ {money(daily_252)}/día (252)\n"
-            f"≈ {money(month_365)}/mes (30d) | ≈ {money(month_252)}/mes (30d)\n\n"
-            f"Umbrales: 🟢≥{THRESH_HIGH:.1f}% | ⚠️≤{THRESH_LOW:.1f}% | 🔥≥{SUPER_HIGH:.1f}%"
+            "📊 Resumen diario Caución 1D\n\n"
+            + msg_financial_block(rate, trend)
+            + f"\n\nUmbrales: 🟢≥{THRESH_HIGH:.1f}% | ⚠️≤{THRESH_LOW:.1f}% | 🔥≥{SUPER_HIGH:.1f}%"
         )
         st["last_daily"] = today
 
     # Guardar última tasa
     st["last_rate"] = rate
-
-    save_state(st)
-
-if __name__ == "__main__":
-    main()
+    s
