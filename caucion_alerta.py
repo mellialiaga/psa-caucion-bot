@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 from pathlib import Path
 
 # =========================
-# CONFIG
+# CONFIG GENERAL
 # =========================
 BYMA_HTML_URL = "https://www.portfoliopersonal.com/Cotizaciones/Cauciones"
 
@@ -14,28 +14,37 @@ CHAT_ID = os.environ["TG_CHAT_ID"]
 TZ = ZoneInfo("America/Argentina/Cordoba")
 STATE_PATH = Path(".state/state.json")
 
+# Capital base
 CAPITAL_BASE = float(os.getenv("CAPITAL_BASE", "38901078.37"))
-DAYS_IN_YEAR = int(os.getenv("DAYS_IN_YEAR", "365"))
-DAYS_MONTH = int(os.getenv("DAYS_MONTH", "30"))
 
+# TNA → diario
+DAYS_IN_YEAR = 365
+DAYS_MONTH = 30
+
+# Plazos a monitorear
 TENORS = [int(x.strip()) for x in os.getenv("TENORS", "1,7,14,30").split(",")]
 
-THRESH_DEFAULTS = {
+# Umbrales por plazo
+THRESHOLDS = {
     1: float(os.getenv("THRESH_1D", "40.0")),
     7: float(os.getenv("THRESH_7D", "43.0")),
     14: float(os.getenv("THRESH_14D", "44.0")),
     30: float(os.getenv("THRESH_30D", "45.0")),
 }
 
+# Premio vs 1D
 PREMIUM_SPREAD = float(os.getenv("PREMIUM_SPREAD", "3.0"))
+
+# Súper oportunidad
 SUPER_HIGH = float(os.getenv("SUPER_HIGH", "48.0"))
 
+# Resumen diario
 DAILY_HOUR = int(os.getenv("DAILY_HOUR", "10"))
 
-# Payday: 4to día hábil (lun-vie) del mes
+# Sueldo: 4º día hábil
 PAYDAY_N = int(os.getenv("PAYDAY_N", "4"))
-PAYDAY_REMIND_DAYS = int(os.getenv("PAYDAY_REMIND_DAYS", "2"))  # recordatorio N hábiles antes
-SALARY_TARGET = float(os.getenv("SALARY_TARGET", "0"))  # opcional: tu sueldo objetivo (ARS)
+PAYDAY_REMIND_DAYS = int(os.getenv("PAYDAY_REMIND_DAYS", "2"))
+SALARY_TARGET = float(os.getenv("SALARY_TARGET", "0"))
 
 # =========================
 # HELPERS
@@ -52,63 +61,61 @@ def money(n: float) -> str:
 def gross_daily(capital: float, tna: float) -> float:
     return capital * (tna / 100.0) / DAYS_IN_YEAR
 
+def estimated_costs_daily(capital: float) -> float:
+    """
+    Costos reales caución 1D (calibrado con boleta BMB):
+    - Arancel 0,0027%
+    - Derecho BYMA 0,0005%
+    - IVA 21%
+    Total efectivo ≈ 0,00387%
+    """
+    BASE_FEE = 0.000032   # 0,0032%
+    IVA = 0.21
+    return capital * BASE_FEE * (1 + IVA)
+
 def fetch_rates(tenors):
     headers = {"User-Agent": "Mozilla/5.0"}
     html = requests.get(BYMA_HTML_URL, headers=headers, timeout=25).text
     rates = {}
-
     for d in tenors:
         pattern = rf"{d}\s*D[IÍ]A(?:S)?\s*.*?PESOS.*?(\d{{1,2}}[.,]\d{{1,2}})\s*%"
         m = re.search(pattern, html, re.I | re.S)
         rates[d] = float(m.group(1).replace(",", ".")) if m else None
-
     return rates
 
 def load_state():
     if STATE_PATH.exists():
         return json.loads(STATE_PATH.read_text(encoding="utf-8"))
     return {
-        "last_daily": "",
         "last_rates": {},
         "crossed": {},
         "premium_sent": {},
         "super_sent": False,
-        "payday_notified": "",      # YYYY-MM-DD del payday ya notificado
-        "payday_remind": "",        # YYYY-MM-DD del remind ya notificado
+        "last_daily": "",
+        "payday_notified": "",
+        "payday_remind": ""
     }
 
 def save_state(state):
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     STATE_PATH.write_text(json.dumps(state), encoding="utf-8")
 
-def trend(last_rate, rate):
-    if last_rate is None or rate is None:
+def trend(prev, curr):
+    if prev is None or curr is None:
         return "—"
-    if rate > last_rate:
-        return f"⬆ (+{rate-last_rate:.2f})"
-    if rate < last_rate:
-        return f"⬇ (-{last_rate-rate:.2f})"
-    return "➡ (0.00)"
+    if curr > prev:
+        return f"⬆ (+{curr-prev:.2f})"
+    if curr < prev:
+        return f"⬇ (-{prev-curr:.2f})"
+    return "➡ 0.00"
 
-def build_table(rates, last_rates):
-    lines = ["Plazo | Tasa | Tendencia | $/día | $/mes(30d)", "---|---:|---:|---:|---:"]
-    for d in sorted(rates.keys()):
-        r = rates[d]
-        lr = last_rates.get(str(d))
-        tr = trend(lr, r)
-        if r is None:
-            lines.append(f"{d}D | — | — | — | —")
-        else:
-            dd = gross_daily(CAPITAL_BASE, r)
-            mm = dd * DAYS_MONTH
-            lines.append(f"{d}D | {r:.2f}% | {tr} | {money(dd)} | {money(mm)}")
-    return "\n".join(lines)
+# =========================
+# FECHAS HÁBILES
+# =========================
+def is_business_day(d: date) -> bool:
+    return d.weekday() < 5
 
-def is_business_day(dt: date) -> bool:
-    # Lunes(0) a Viernes(4). (No contempla feriados)
-    return dt.weekday() < 5
-
-def nth_business_day(year: int, month: int, n: int) -> date:
+def nth_business_day(year, month, n):
     d = date(year, month, 1)
     count = 0
     while True:
@@ -118,7 +125,7 @@ def nth_business_day(year: int, month: int, n: int) -> date:
                 return d
         d += timedelta(days=1)
 
-def business_days_before(target: date, k: int) -> date:
+def business_days_before(target: date, k: int):
     d = target
     moved = 0
     while moved < k:
@@ -127,42 +134,43 @@ def business_days_before(target: date, k: int) -> date:
             moved += 1
     return d
 
-def payday_messages(now_dt: datetime, rates: dict, st: dict):
-    """Notifica reminder y payday (una sola vez)."""
-    today = now_dt.date()
+# =========================
+# PAYDAY LOGIC
+# =========================
+def payday_logic(now, rates, st):
+    today = now.date()
     payday = nth_business_day(today.year, today.month, PAYDAY_N)
-    remind_day = business_days_before(payday, PAYDAY_REMIND_DAYS)
+    remind = business_days_before(payday, PAYDAY_REMIND_DAYS)
 
     rate_1d = rates.get(1)
     if rate_1d is None:
-        return  # sin 1D no hacemos mensajes de sueldo
+        return
 
-    # Estimación diaria con 1D (para tomar decisiones rápidas)
-    daily_1d = gross_daily(CAPITAL_BASE, rate_1d)
+    gross = gross_daily(CAPITAL_BASE, rate_1d)
+    costs = estimated_costs_daily(CAPITAL_BASE)
+    net = gross - costs
 
-    # Reminder (N hábiles antes)
-    if today == remind_day and st.get("payday_remind") != str(remind_day):
+    if today == remind and st["payday_remind"] != str(remind):
         msg = (
             f"🗓️ Recordatorio SUELDO\n\n"
-            f"El cobro es el {PAYDAY_N}º día hábil: {payday.isoformat()}.\n"
-            f"Hoy faltan {PAYDAY_REMIND_DAYS} hábiles.\n\n"
-            f"✅ Sugerencia: si vas a retirar, empezá a priorizar 1D para llegar líquido.\n"
-            f"1D hoy: {rate_1d:.2f}% → ≈ {money(daily_1d)} / día (bruto, aprox)\n"
+            f"El cobro es el {PAYDAY_N}º día hábil: {payday}\n\n"
+            f"1D hoy: {rate_1d:.2f}%\n"
+            f"Bruto: {money(gross)} | Neto: {money(net)}\n\n"
+            f"👉 Sugerencia: priorizar 1D para llegar líquido."
         )
         if SALARY_TARGET > 0:
-            msg += f"\n🎯 Sueldo objetivo: {money(SALARY_TARGET)}\n👉 Guardá ese monto en 1D + un buffer."
+            msg += f"\n🎯 Sueldo objetivo: {money(SALARY_TARGET)}"
         send(msg)
-        st["payday_remind"] = str(remind_day)
+        st["payday_remind"] = str(remind)
 
-    # Día de cobro
-    if today == payday and st.get("payday_notified") != str(payday):
-        msg = (
-            f"💵 HOY ES DÍA DE SUELDO (4º hábil)\n\n"
-            f"Fecha: {payday.isoformat()}\n"
-            f"1D: {rate_1d:.2f}% → ≈ {money(daily_1d)} / día (bruto, aprox)\n\n"
-            f"✅ Acción: retirar el sueldo y dejar el remanente trabajando (1D o escalonado)."
+    if today == payday and st["payday_notified"] != str(payday):
+        send(
+            f"💵 HOY ES DÍA DE SUELDO\n\n"
+            f"Fecha: {payday}\n"
+            f"1D: {rate_1d:.2f}%\n"
+            f"Neto estimado hoy: {money(net)}\n\n"
+            f"👉 Retirar sueldo y rearmar estrategia."
         )
-        send(msg)
         st["payday_notified"] = str(payday)
 
 # =========================
@@ -177,101 +185,32 @@ def main():
 
     rate_1d = rates.get(1)
     if rate_1d is None:
-        send("⚠️ No pude leer la tasa de Caución 1D (fuente BYMA HTML).")
+        send("⚠️ No pude leer la tasa de Caución 1D.")
         return
 
-    # --- Payday logic (4º hábil) ---
-    payday_messages(now, rates, st)
+    # Payday
+    payday_logic(now, rates, st)
 
-    # 1) SUPER ALERTA (mejor plazo supera SUPER_HIGH)
-    if not st.get("super_sent", False):
-        best = None
-        for d, r in rates.items():
-            if r is not None and (best is None or r > best[1]):
-                best = (d, r)
+    # Súper oportunidad
+    if not st["super_sent"]:
+        best = max(
+            [(d, r) for d, r in rates.items() if r is not None],
+            key=lambda x: x[1],
+            default=None
+        )
         if best and best[1] >= SUPER_HIGH:
             d, r = best
             send(
-                f"🔥 SÚPER OPORTUNIDAD (curva)\n\n"
+                f"🔥 SÚPER OPORTUNIDAD\n\n"
                 f"Mejor plazo: {d}D → {r:.2f}%\n"
-                f"1D: {rate_1d:.2f}%\n\n"
-                f"💰 Estimado (base {money(CAPITAL_BASE)}):\n"
-                f"≈ {money(gross_daily(CAPITAL_BASE, r))} / día (bruto, aprox)"
+                f"1D: {rate_1d:.2f}%"
             )
             st["super_sent"] = True
 
-    # 2) Alertas por cruce de umbral por plazo
-    crossed = st.get("crossed", {})
+    # Cruces por umbral
     for d, r in rates.items():
         if r is None:
             continue
-        thr = THRESH_DEFAULTS.get(d, THRESH_DEFAULTS.get(1, 40.0))
-        is_above = (r >= thr)
-        was_above = bool(crossed.get(str(d), False))
-
-        if is_above and not was_above:
-            send(
-                f"🟢 OPORTUNIDAD {d}D (cruce ≥ {thr:.1f}%)\n\n"
-                f"{d}D: {r:.2f}% {trend(last_rates.get(str(d)), r)}\n"
-                f"1D: {rate_1d:.2f}%\n\n"
-                f"💰 Estimado con {money(CAPITAL_BASE)}:\n"
-                f"≈ {money(gross_daily(CAPITAL_BASE, r))} / día\n"
-                f"≈ {money(gross_daily(CAPITAL_BASE, r)*DAYS_MONTH)} / mes(30d)\n\n"
-                f"👉 Si no necesitás liquidez diaria, es una tasa para mirar"
-            )
-        crossed[str(d)] = is_above
-    st["crossed"] = crossed
-
-    # 3) Premio por lockear vs 1D
-    premium_sent = st.get("premium_sent", {})
-    for d, r in rates.items():
-        if d == 1 or r is None:
-            continue
-        spread = r - rate_1d
-        is_premium = spread >= PREMIUM_SPREAD
-        was_premium = bool(premium_sent.get(str(d), False))
-
-        if is_premium and not was_premium:
-            send(
-                f"🟣 PREMIO POR LOCKEAR {d}D\n\n"
-                f"{d}D: {r:.2f}% | 1D: {rate_1d:.2f}%\n"
-                f"Premio: +{spread:.2f} pts\n\n"
-                f"💰 Estimado con {money(CAPITAL_BASE)}:\n"
-                f"≈ {money(gross_daily(CAPITAL_BASE, r))} / día (bruto, aprox)\n\n"
-                f"👉 Oportunidad si podés inmovilizar {d} días"
-            )
-        premium_sent[str(d)] = is_premium
-    st["premium_sent"] = premium_sent
-
-    # 4) Curva invertida
-    for d, r in rates.items():
-        if d == 1 or r is None:
-            continue
-        if r < rate_1d:
-            send(
-                f"🟡 CURVA INVERTIDA\n\n"
-                f"{d}D: {r:.2f}% < 1D: {rate_1d:.2f}%\n"
-                f"👉 Señal: ojo con lockear, el corto paga más."
-            )
-            break
-
-    # 5) Resumen diario (tabla)
-    today_str = now.strftime("%Y-%m-%d")
-    if now.hour == DAILY_HOUR and st.get("last_daily") != today_str:
-        table = build_table(rates, last_rates)
-        payday = nth_business_day(now.year, now.month, PAYDAY_N)
-        send(
-            "📊 Resumen diario – Curva de Cauciones (Pesos)\n\n"
-            f"Capital base: {money(CAPITAL_BASE)}\n"
-            f"Payday (4º hábil): {payday.isoformat()}\n\n"
-            f"{table}\n\n"
-            f"Reglas: umbrales por plazo + premio ≥ {PREMIUM_SPREAD:.1f} pts vs 1D"
-        )
-        st["last_daily"] = today_str
-
-    # Guardar tasas para tendencia
-    st["last_rates"] = {str(k): v for k, v in rates.items() if v is not None}
-    save_state(st)
-
-if __name__ == "__main__":
-    main()
+        thr = THRESHOLDS.get(d, THRESHOLDS[1])
+        crossed_now = r >= thr
+        crossed_before = st["cr]()_
