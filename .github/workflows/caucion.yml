@@ -26,10 +26,19 @@ jobs:
 
       - run: python caucion_alerta.py
         env:
-          CAPITAL_BASE: "38901078.37"
-          SUPER_HIGH: "42.0"
-          BMB_FEE_MONTHLY: "0.00083"
-          BYMA_GARANTIA_FEE: "0.00045"
-          IVA: "0.21"
-          DAYS_IN_YEAR: "365"
-          DAYS_IN_MONTH: "30"
+            CAPITAL_BASE: "38901078.37"
+            TENORS: "1,7,14,30"
+            THRESH_1D: "40.0"
+            THRESH_7D: "43.0"
+            THRESH_14D: "44.0"
+            THRESH_30D: "45.0"
+            PREMIUM_SPREAD: "3.0"
+            SUPER_HIGH: "48.0"
+            DAILY_HOUR: "10"
+            DAYS_IN_YEAR: "365"
+            DAYS_MONTH: "30"
+            PAYDAY_N: "4"
+            PAYDAY_REMIND_DAYS: "2"
+# opcional:
+# SALARY_TARGET: "1500000"
+
