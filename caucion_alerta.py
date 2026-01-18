@@ -3,7 +3,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
-BMB_URL = "https://www.bullmarketbrokers.com/Cotizaciones/cauciones"
+BYMA_HTML_URL = "https://www.portfoliopersonal.com/Cotizaciones/Cauciones"
 
 TOKEN = os.environ["TG_BOT_TOKEN"]
 CHAT_ID = os.environ["TG_CHAT_ID"]
@@ -22,11 +22,14 @@ def send(msg: str):
 
 def fetch_rate():
     headers = {"User-Agent": "Mozilla/5.0"}
-    html = requests.get(BMB_URL, headers=headers, timeout=25).text
-    m = re.search(r"(Última\s*Tasa|Tasa).*?(\d{1,2}[.,]\d{1,2})", html, re.I | re.S)
+    html = requests.get(BYMA_HTML_URL, headers=headers, timeout=25).text
+
+    # Busca la fila "1 DÍA" + "PESOS" y toma el primer porcentaje que aparece después
+    m = re.search(r"1\s*D[IÍ]A.*?PESOS.*?(\d{1,2}[.,]\d{1,2})\s*%", html, re.I | re.S)
     if not m:
         return None
-    return float(m.group(2).replace(",", "."))
+
+    return float(m.group(1).replace(",", "."))
 
 def load_state():
     if STATE_PATH.exists():
