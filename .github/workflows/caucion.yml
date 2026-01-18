@@ -26,10 +26,10 @@ jobs:
 
       - run: python caucion_alerta.py
         env:
-          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          THRESH_HIGH: "40.0"
-          THRESH_LOW: "35.0"
-          DAILY_HOUR: "10"
-SUPER_HIGH: "42.0"
-CAPITAL_BASE: "38901078.37"
+          CAPITAL_BASE: "38901078.37"
+          SUPER_HIGH: "42.0"
+          BMB_FEE_MONTHLY: "0.00083"
+          BYMA_GARANTIA_FEE: "0.00045"
+          IVA: "0.21"
+          DAYS_IN_YEAR: "365"
+          DAYS_IN_MONTH: "30"
