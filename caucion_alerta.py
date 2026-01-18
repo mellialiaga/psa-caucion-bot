@@ -11,30 +11,35 @@ BYMA_HTML_URL = "https://www.portfoliopersonal.com/Cotizaciones/Cauciones"
 TOKEN = os.environ["TG_BOT_TOKEN"]
 CHAT_ID = os.environ["TG_CHAT_ID"]
 
-THRESH_HIGH = float(os.getenv("THRESH_HIGH", "40.0"))
-THRESH_LOW  = float(os.getenv("THRESH_LOW", "35.0"))
-SUPER_HIGH  = float(os.getenv("SUPER_HIGH", "42.0"))
-
-DAILY_HOUR  = int(os.getenv("DAILY_HOUR", "10"))
-
-CAPITAL_BASE = float(os.getenv("CAPITAL_BASE", "38901078.37"))
-
-# --- Fees (según tarifario BMB / BYMA) ---
-# BMB: Caución Colocador = 0,083% mensual (prorrata por día)
-BMB_FEE_MONTHLY = float(os.getenv("BMB_FEE_MONTHLY", "0.00083"))  # 0,083% => 0.00083
-
-# BYMA: gastos administración garantías = 0,045% sobre monto (por operación)
-BYMA_GARANTIA_FEE = float(os.getenv("BYMA_GARANTIA_FEE", "0.00045"))  # 0,045% => 0.00045
-
-# IVA sobre comisiones/aranceles (caución no está exenta)
-IVA = float(os.getenv("IVA", "0.21"))
-
-# Para cálculos
-DAYS_IN_YEAR = int(os.getenv("DAYS_IN_YEAR", "365"))
-DAYS_IN_MONTH = int(os.getenv("DAYS_IN_MONTH", "30"))  # prorrateo simple comisión mensual
-
 TZ = ZoneInfo("America/Argentina/Cordoba")
 STATE_PATH = Path(".state/state.json")
+
+# Capital para estimaciones (diarias)
+CAPITAL_BASE = float(os.getenv("CAPITAL_BASE", "38901078.37"))
+DAYS_IN_YEAR = int(os.getenv("DAYS_IN_YEAR", "365"))   # TNA/365
+DAYS_MONTH = int(os.getenv("DAYS_MONTH", "30"))         # proyección simple mensual
+
+# Plazos a monitorear (días)
+TENORS = [int(x.strip()) for x in os.getenv("TENORS", "1,7,14,30").split(",")]
+
+# Umbrales por plazo (TNA)
+# Defaults razonables: ajustalos con env vars si querés.
+THRESH_DEFAULTS = {
+    1: float(os.getenv("THRESH_1D", "40.0")),
+    7: float(os.getenv("THRESH_7D", "43.0")),
+    14: float(os.getenv("THRESH_14D", "44.0")),
+    30: float(os.getenv("THRESH_30D", "45.0")),
+}
+
+# Premio vs 1D para considerar oportunidad (puntos porcentuales)
+# Ej: si 7D - 1D >= 3.0 -> oportunidad por premio
+PREMIUM_SPREAD = float(os.getenv("PREMIUM_SPREAD", "3.0"))
+
+# Alerta “super” global (si cualquier plazo supera este nivel)
+SUPER_HIGH = float(os.getenv("SUPER_HIGH", "48.0"))
+
+# Resumen diario
+DAILY_HOUR = int(os.getenv("DAILY_HOUR", "10"))
 
 # =========================
 # HELPERS
@@ -48,72 +53,68 @@ def money(n: float) -> str:
     s = f"{n:,.0f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return f"${s}"
 
-def fetch_rate():
+def gross_daily(capital: float, tna: float) -> float:
+    return capital * (tna / 100.0) / DAYS_IN_YEAR
+
+def fetch_rates(tenors):
+    """
+    Lee tasas desde HTML (sin JS) buscando filas: 'X DÍA(S)' + 'PESOS' + '%'
+    Devuelve dict {days: rate_float}
+    """
     headers = {"User-Agent": "Mozilla/5.0"}
     html = requests.get(BYMA_HTML_URL, headers=headers, timeout=25).text
-    m = re.search(r"1\s*D[IÍ]A.*?PESOS.*?(\d{1,2}[.,]\d{1,2})\s*%", html, re.I | re.S)
-    if not m:
-        return None
-    return float(m.group(1).replace(",", "."))
+    rates = {}
+
+    for d in tenors:
+        pattern = rf"{d}\s*D[IÍ]A(?:S)?\s*.*?PESOS.*?(\d{{1,2}}[.,]\d{{1,2}})\s*%"
+        m = re.search(pattern, html, re.I | re.S)
+        if m:
+            rates[d] = float(m.group(1).replace(",", "."))
+        else:
+            rates[d] = None
+
+    return rates
 
 def load_state():
     if STATE_PATH.exists():
         return json.loads(STATE_PATH.read_text(encoding="utf-8"))
     return {
-        "last_state": "",
         "last_daily": "",
-        "last_rate": None,
-        "last_cross_high": False,
-        "last_cross_low": False,
+        "last_rates": {},          # { "1": 39.5, "7": 42.1, ... }
+        "crossed": {},             # { "1": false/true, "7": ... } para umbrales
+        "premium_sent": {},        # { "7": false/true, "14": ... } premio vs 1D
+        "super_sent": False,
     }
 
 def save_state(state):
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     STATE_PATH.write_text(json.dumps(state), encoding="utf-8")
 
-def trend_text(last_rate, rate):
-    if last_rate is None:
+def trend(last_rate, rate):
+    if last_rate is None or rate is None:
         return "—"
     if rate > last_rate:
-        return f"⬆ sube (+{rate - last_rate:.2f})"
+        return f"⬆ (+{rate-last_rate:.2f})"
     if rate < last_rate:
-        return f"⬇ baja (-{last_rate - rate:.2f})"
-    return "➡ igual"
+        return f"⬇ (-{last_rate-rate:.2f})"
+    return "➡ (0.00)"
 
-def gross_interest_daily(capital: float, tna: float) -> float:
-    return capital * (tna / 100.0) / DAYS_IN_YEAR
+def fmt_rate(r):
+    return "—" if r is None else f"{r:.2f}%"
 
-def estimated_costs_daily(capital: float) -> float:
-    """
-    Estimación diaria para caución 1D:
-    - Comisión BMB colocador 0,083% mensual prorrateada 1/30
-    - BYMA garantía 0,045% por operación (1D -> diario)
-    - IVA sobre ambos
-    """
-    bmb_daily = capital * (BMB_FEE_MONTHLY / DAYS_IN_MONTH)
-    byma_daily = capital * BYMA_GARANTIA_FEE
-    subtotal = bmb_daily + byma_daily
-    return subtotal * (1.0 + IVA)
-
-def msg_financial_block(rate: float, trend: str) -> str:
-    gross = gross_interest_daily(CAPITAL_BASE, rate)
-    costs = estimated_costs_daily(CAPITAL_BASE)
-    net = gross - costs
-
-    # Señal rápida
-    if net > 0:
-        sign = "✅ Neto positivo"
-    else:
-        sign = "🧊 Neto negativo (costos > interés)"
-
-    return (
-        f"Tasa (TNA): {rate:.2f}%  | Tendencia: {trend}\n\n"
-        f"💰 Con {money(CAPITAL_BASE)} (estimación diaria):\n"
-        f"• Bruto: {money(gross)}\n"
-        f"• Costos: {money(costs)}\n"
-        f"• Neto: {money(net)}\n"
-        f"{sign}"
-    )
+def build_table(rates, last_rates):
+    lines = ["Plazo | Tasa | Tendencia | $/día | $/mes(30d)", "---|---:|---:|---:|---:"]
+    for d in sorted(rates.keys()):
+        r = rates[d]
+        lr = last_rates.get(str(d))
+        tr = trend(lr, r)
+        if r is None:
+            lines.append(f"{d}D | — | — | — | —")
+        else:
+            dd = gross_daily(CAPITAL_BASE, r)
+            mm = dd * DAYS_MONTH
+            lines.append(f"{d}D | {r:.2f}% | {tr} | {money(dd)} | {money(mm)}")
+    return "\n".join(lines)
 
 # =========================
 # MAIN
@@ -122,82 +123,107 @@ def main():
     now = datetime.now(TZ)
     st = load_state()
 
-    rate = fetch_rate()
+    rates = fetch_rates(TENORS)
+    last_rates = st.get("last_rates", {})
 
-    # Si no hay tasa, avisar una sola vez
-    if rate is None:
-        if st.get("last_state") != "ERR":
-            send("⚠️ No pude leer la tasa de Caución 1D (BYMA).")
-            st["last_state"] = "ERR"
-            save_state(st)
+    # Requisito mínimo: 1D debe existir para comparativas
+    rate_1d = rates.get(1)
+    if rate_1d is None:
+        send("⚠️ No pude leer la tasa de Caución 1D (fuente BYMA HTML).")
         return
 
-    last_rate = st.get("last_rate")
-    trend = trend_text(last_rate, rate)
-
-    # Estado por umbrales
-    state = "MID"
-    if rate >= THRESH_HIGH:
-        state = "HIGH"
-    elif rate <= THRESH_LOW:
-        state = "LOW"
-
-    # Cruces
-    crossed_high = rate >= THRESH_HIGH
-    crossed_low  = rate <= THRESH_LOW
-
-    # 🔥 Súper tasa
-    if rate >= SUPER_HIGH and st.get("last_state") != "SUPER":
-        send(
-            "🔥 SÚPER TASA CAUCIÓN 1D\n\n"
-            + msg_financial_block(rate, trend)
-            + f"\n\nUmbrales: 🟢≥{THRESH_HIGH:.1f}% | ⚠️≤{THRESH_LOW:.1f}% | 🔥≥{SUPER_HIGH:.1f}%"
-        )
-        st["last_state"] = "SUPER"
-
-    # 🟢 Cruce a oportunidad
-    if crossed_high and not st.get("last_cross_high", False):
-        send(
-            f"🟢 CRUCE A OPORTUNIDAD (≥ {THRESH_HIGH:.1f}%)\n\n"
-            + msg_financial_block(rate, trend)
-        )
-        st["last_cross_high"] = True
-    if not crossed_high:
-        st["last_cross_high"] = False
-
-    # ⚠️ Cruce a warning
-    if crossed_low and not st.get("last_cross_low", False):
-        send(
-            f"⚠️ CRUCE A WARNING (≤ {THRESH_LOW:.1f}%)\n\n"
-            + msg_financial_block(rate, trend)
-            + "\n\n👉 Evaluar alternativas"
-        )
-        st["last_cross_low"] = True
-    if not crossed_low:
-        st["last_cross_low"] = False
-
-    # Alertas por cambio de estado (respaldo)
-    if state != st.get("last_state") and st.get("last_state") not in ("SUPER",):
-        if state == "HIGH":
-            send("🟢 OPORTUNIDAD CAUCIÓN 1D\n\n" + msg_financial_block(rate, trend))
-        elif state == "LOW":
+    # 1) SUPER ALERTA si cualquier plazo supera SUPER_HIGH
+    if not st.get("super_sent", False):
+        best = None
+        for d, r in rates.items():
+            if r is not None and (best is None or r > best[1]):
+                best = (d, r)
+        if best and best[1] >= SUPER_HIGH:
+            d, r = best
             send(
-                "⚠️ WARNING CAUCIÓN 1D\n\n"
-                + msg_financial_block(rate, trend)
-                + "\n\n👉 Evaluar alternativas"
+                f"🔥 SÚPER OPORTUNIDAD (curva)\n\n"
+                f"Mejor plazo: {d}D → {r:.2f}%\n"
+                f"1D: {rate_1d:.2f}%\n\n"
+                f"💰 Estimado {d}D (base {money(CAPITAL_BASE)}):\n"
+                f"≈ {money(gross_daily(CAPITAL_BASE, r))} / día (aprox)\n"
+                f"📌 Señal: tasa excepcional"
             )
-        st["last_state"] = state
+            st["super_sent"] = True
 
-    # 📊 Resumen diario
+    # 2) Alertas por UMBRAL y CRUCE por cada plazo
+    crossed = st.get("crossed", {})
+    for d, r in rates.items():
+        if r is None:
+            continue
+        thr = THRESH_DEFAULTS.get(d, THRESH_DEFAULTS.get(1, 40.0))
+        is_above = (r >= thr)
+        was_above = bool(crossed.get(str(d), False))
+
+        # Solo avisar al CRUZAR (evita spam)
+        if is_above and not was_above:
+            send(
+                f"🟢 OPORTUNIDAD {d}D (cruce ≥ {thr:.1f}%)\n\n"
+                f"{d}D: {r:.2f}% {trend(last_rates.get(str(d)), r)}\n"
+                f"1D: {rate_1d:.2f}%\n\n"
+                f"💰 Estimado con {money(CAPITAL_BASE)}:\n"
+                f"≈ {money(gross_daily(CAPITAL_BASE, r))} / día\n"
+                f"≈ {money(gross_daily(CAPITAL_BASE, r)*DAYS_MONTH)} / mes(30d)\n\n"
+                f"👉 Si no necesitás liquidez diaria, es una tasa para mirar"
+            )
+        crossed[str(d)] = is_above
+
+    st["crossed"] = crossed
+
+    # 3) Alertas por PREMIO vs 1D (lockear paga mucho más)
+    premium_sent = st.get("premium_sent", {})
+    for d, r in rates.items():
+        if d == 1 or r is None:
+            continue
+        spread = r - rate_1d
+        is_premium = spread >= PREMIUM_SPREAD
+        was_premium = bool(premium_sent.get(str(d), False))
+
+        if is_premium and not was_premium:
+            send(
+                f"🟣 PREMIO POR LOCKEAR {d}D\n\n"
+                f"{d}D: {r:.2f}% | 1D: {rate_1d:.2f}%\n"
+                f"Premio: +{spread:.2f} pts\n\n"
+                f"💰 Estimado {d}D con {money(CAPITAL_BASE)}:\n"
+                f"≈ {money(gross_daily(CAPITAL_BASE, r))} / día\n\n"
+                f"👉 Oportunidad si podés inmovilizar {d} días"
+            )
+        premium_sent[str(d)] = is_premium
+
+    st["premium_sent"] = premium_sent
+
+    # 4) Curva “rara” / inversión: plazo largo < corto (señal)
+    # Ej: 7D < 1D
+    for d, r in rates.items():
+        if d == 1 or r is None:
+            continue
+        if r < rate_1d:
+            send(
+                f"🟡 CURVA INVERTIDA\n\n"
+                f"{d}D: {r:.2f}% < 1D: {rate_1d:.2f}%\n"
+                f"👉 Señal de mercado: el corto paga más que el largo (ojo con lockear)"
+            )
+            break  # con una alcanza
+
+    # 5) Resumen diario (tabla completa)
     today = now.strftime("%Y-%m-%d")
     if now.hour == DAILY_HOUR and st.get("last_daily") != today:
+        table = build_table(rates, last_rates)
         send(
-            "📊 Resumen diario Caución 1D\n\n"
-            + msg_financial_block(rate, trend)
-            + f"\n\nUmbrales: 🟢≥{THRESH_HIGH:.1f}% | ⚠️≤{THRESH_LOW:.1f}% | 🔥≥{SUPER_HIGH:.1f}%"
+            "📊 Resumen diario – Curva de Cauciones (Pesos)\n\n"
+            f"Capital base: {money(CAPITAL_BASE)}\n\n"
+            f"{table}\n\n"
+            f"Reglas: umbrales por plazo + premio ≥ {PREMIUM_SPREAD:.1f} pts vs 1D"
         )
         st["last_daily"] = today
 
-    # Guardar última tasa
-    st["last_rate"] = rate
-    s
+    # Guardar tasas para tendencia
+    st["last_rates"] = {str(k): v for k, v in rates.items() if v is not None}
+    save_state(st)
+
+if __name__ == "__main__":
+    main()
