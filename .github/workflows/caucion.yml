@@ -1,62 +1,7 @@
-name: PSA Caucion Bot
-
-on:
-  schedule:
-    - cron: "*/15 * * * *"
-  workflow_dispatch:
-
-permissions:
-  contents: write
-
-jobs:
-  run-bot:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Run bot
-        env:
-          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          USERS_JSON: ${{ secrets.USERS_JSON }}
-
-          MODE: "PRO"
-          TZ: "America/Argentina/Cordoba"
-
-          CAPITAL_BASE: "38901078.37"
-          TENORS: "1,7,14,30"
-          THRESH_1D: "40.0"
-          THRESH_7D: "43.0"
-          THRESH_14D: "44.0"
-          THRESH_30D: "45.0"
-          PREMIUM_SPREAD: "3.0"
-          SUPER_HIGH: "48.0"
-
-          PAYDAY_N: "4"
-          PAYDAY_REMIND_DAYS: "2"
-          # SALARY_TARGET: "1500000"
-
-          BASE_FEE: "0.000032"
-          IVA: "0.21"
-        run: |
-          python caucion_alerta.py
-
-      - name: Commit dashboard (docs/data/latest.json)
+      - name: Commit dashboard + state
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/data/latest.json || true
-          git diff --cached --quiet || git commit -m "Update dashboard data"
+          git add docs/data/latest.json .state/*.json .state/market_history.json || true
+          git diff --cached --quiet || git commit -m "Update dashboard/state"
           git push
