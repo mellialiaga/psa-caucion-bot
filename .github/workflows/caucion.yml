@@ -3,23 +3,20 @@ name: PSA Caucion Bot
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "*/15 * * * *"   # cada 15 min (ajustá si querés)
 
 permissions:
   contents: write
 
-concurrency:
-  group: psa-caucion-bot
-  cancel-in-progress: true
-
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          persist-credentials: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -27,9 +24,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
 
       - name: Run PSA Caucion Bot
         env:
@@ -37,6 +32,7 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           USERS_JSON: ${{ secrets.USERS_JSON }}
 
+          # Variables opcionales (si no están, usa defaults)
           MODE: ${{ vars.MODE }}
           SOURCE_NAME: ${{ vars.SOURCE_NAME }}
           BYMA_HTML_URL: ${{ vars.BYMA_HTML_URL }}
@@ -47,15 +43,14 @@ jobs:
 
           DAILY_HOUR: ${{ vars.DAILY_HOUR }}
           CAPITAL_BASE: ${{ vars.CAPITAL_BASE }}
-        run: |
-          python caucion_alerta.py
+        run: python caucion_alerta.py
 
       - name: Commit dashboard + state (if changed)
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add docs/data/latest.json .state/state.json || true
+          git add .state docs || true
 
           if git diff --cached --quiet; then
             echo "No changes to commit."
