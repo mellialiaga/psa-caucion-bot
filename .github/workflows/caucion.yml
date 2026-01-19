@@ -1,0 +1,39 @@
+name: PSA Caucion Bot
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run PSA Caucion Bot
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          USERS_JSON: ${{ secrets.USERS_JSON }}
+          MODE: PRO
+          PROFILE: BALANCED
+        run: python caucion_alerta.py
+
+      - name: Commit dashboard + state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/data/latest.json .state/*.json || true
+          git diff --cached --quiet || git commit -m "Update dashboard/state"
+          git push
