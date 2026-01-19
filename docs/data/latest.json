@@ -1,15 +1,15 @@
 {
-  "timestamp": "2026-01-19T12:48:31.986074-03:00",
+  "timestamp": "2026-01-19T13:23:51.933363-03:00",
   "source": "https://www.portfoliopersonal.com/Cotizaciones/Cauciones",
   "rates": {
-    "1": 34.4,
-    "7": 34.0,
+    "1": 33.7,
+    "7": 34.5,
     "14": 34.1,
-    "30": 34.9
+    "30": 33.5
   },
   "best": {
-    "tenor_days": 30,
-    "rate": 34.9
+    "tenor_days": 7,
+    "rate": 34.5
   },
   "tenors": [
     1,
