@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>PSA Caución Bot — Dashboard</title>
+  <style>
+    :root{ --bg:#0b1220; --card:#101a33; --muted:#9fb0d0; --text:#e9f0ff; --ok:#27c07d; --mid:#f7c948; --bad:#ff5a5f; --line:#233257; }
+    body{ margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; background:linear-gradient(180deg,#070b14,#0b1220); color:var(--text); }
+    .wrap{ max-width:980px; margin:0 auto; padding:24px; }
+    .top{ display:flex; gap:14px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+    .brand{ display:flex; gap:12px; align-items:center; }
+    .logo{ width:40px; height:40px; border-radius:12px; background:linear-gradient(135deg,#2b63ff,#8a5cff); display:flex; align-items:center; justify-content:center; font-weight:800; }
+    .h1{ font-size:20px; font-weight:800; margin:0; }
+    .sub{ margin:0; color:var(--muted); font-size:13px; }
+    .grid{ display:grid; grid-template-columns: 1.2fr .8fr; gap:14px; margin-top:16px; }
+    @media (max-width:900px){ .grid{ grid-template-columns:1fr; } }
+    .card{ background:rgba(16,26,51,.85); border:1px solid var(--line); border-radius:18px; padding:16px; box-shadow:0 10px 30px rgba(0,0,0,.25); }
+    .pill{ display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border-radius:999px; font-weight:800; letter-spacing:.2px; }
+    .pill.ok{ background:rgba(39,192,125,.12); border:1px solid rgba(39,192,125,.35); color:var(--ok); }
+    .pill.mid{ background:rgba(247,201,72,.12); border:1px solid rgba(247,201,72,.35); color:var(--mid); }
+    .pill.bad{ background:rgba(255,90,95,.12); border:1px solid rgba(255,90,95,.35); color:var(--bad); }
+    .kpis{ display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; margin-top:12px; }
+    @media (max-width:700px){ .kpis{ grid-template-columns:1fr; } }
+    .kpi{ padding:12px; border-radius:14px; border:1px solid var(--line); background:rgba(0,0,0,.12); }
+    .kpi .lab{ color:var(--muted); font-size:12px; }
+    .kpi .val{ font-size:22px; font-weight:900; margin-top:4px; }
+    .msg{ margin-top:12px; padding:12px; border-radius:14px; border:1px dashed var(--line); color:var(--text); background:rgba(0,0,0,.10); line-height:1.35; }
+    .small{ color:var(--muted); font-size:12px; line-height:1.35; }
+    .row{ display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; }
+    a.btn{ text-decoration:none; color:var(--text); border:1px solid var(--line); padding:10px 12px; border-radius:12px; display:inline-flex; gap:8px; align-items:center; background:rgba(0,0,0,.12); }
+    a.btn:hover{ border-color:#37508a; }
+    code{ color:#cfe1ff; }
+    .foot{ margin-top:14px; color:var(--muted); font-size:11px; }
+    .tag{ font-weight:800; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div class="brand">
+        <div class="logo">PSA</div>
+        <div>
+          <p class="h1">PSA Caución Bot — Dashboard</p>
+          <p class="sub">Estado del mercado y recomendación (perfil <span class="tag">BALANCED</span>)</p>
+        </div>
+      </div>
+      <div class="small" id="updated">Actualizando…</div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div id="statusPill" class="pill mid">⏳ Cargando datos…</div>
+
+        <div class="kpis">
+          <div class="kpi">
+            <div class="lab">Tasa 1D (TNA)</div>
+            <div class="val" id="rate1d">—</div>
+          </div>
+          <div class="kpi">
+            <div class="lab">Umbral (balanceado)</div>
+            <div class="val" id="thr">—</div>
+          </div>
+          <div class="kpi">
+            <div class="lab">Acción sugerida</div>
+            <div class="val" id="action">—</div>
+          </div>
+        </div>
+
+        <div class="msg" id="msg">
+          Esperando datos de <code>docs/data/latest.json</code>.
+        </div>
+
+        <div class="row">
+          <a class="btn" href="./data/latest.json" target="_blank">📄 Ver datos (JSON)</a>
+          <a class="btn" href="https://t.me/" target="_blank">📲 Telegram</a>
+        </div>
+
+        <div class="foot">
+          Disclaimer: herramienta informativa. No brinda asesoramiento financiero ni ejecuta operaciones.
+        </div>
+      </div>
+
+      <div class="card">
+        <p class="h1" style="font-size:16px;">Cómo leer esto</p>
+        <p class="small">
+          <b>🟢 CONVIENE</b>: tasa por encima de umbral y con contexto favorable.<br/>
+          <b>🟡 ESPERAR</b>: tasa normal, sin premio extra. No apurar capital.<br/>
+          <b>🔴 NO CONVIENE</b>: tasa deprimida. Mejor esperar ventana.
+        </p>
+
+        <hr style="border:0;border-top:1px solid var(--line); margin:14px 0;"/>
+
+        <p class="h1" style="font-size:16px;">Umbrales (BALANCED)</p>
+        <p class="small" id="legend">
+          🔴 &lt; 35.5% · 🟡 35.5–36.9% · 🟢 ≥ 37.0% · 🚀 ≥ 40.0%
+        </p>
+
+        <hr style="border:0;border-top:1px solid var(--line); margin:14px 0;"/>
+
+        <p class="h1" style="font-size:16px;">Estado técnico</p>
+        <p class="small" id="tech">Cargando…</p>
+      </div>
+    </div>
+  </div>
+
+<script>
+const DATA_URL = "./data/latest.json?v=" + Date.now(); // cache-bust
+
+function fmtPct(x){
+  if(x === null || x === undefined || isNaN(x)) return "—";
+  return Number(x).toFixed(2).replace(".", ",") + "%";
+}
+
+function setPill(type, text){
+  const el = document.getElementById("statusPill");
+  el.className = "pill " + type;
+  el.textContent = text;
+}
+
+function computeBalanced(rate){
+  // Semáforo BALANCED
+  const thrRed = 35.5;
+  const thrYellow = 37.0;
+  const thrRocket = 40.0;
+
+  if(rate === null || rate === undefined || isNaN(rate)){
+    return { type:"mid", label:"⚠️ Sin datos", action:"—", msg:"No hay datos suficientes para evaluar.", thr: thrYellow };
+  }
+  if(rate >= thrRocket){
+    return { type:"ok", label:"🚀 OPORTUNIDAD FUERTE", action:"Caucionar", msg:"Tasa excepcional. Si tenés capital disponible, es una ventana fuerte.", thr: thrYellow };
+  }
+  if(rate >= thrYellow){
+    return { type:"ok", label:"🟢 CONVIENE CAUCIONAR", action:"Caucionar", msg:"Tasa por encima del umbral balanceado. Operación válida.", thr: thrYellow };
+  }
+  if(rate >= thrRed){
+    return { type:"mid", label:"🟡 ESPERAR", action:"Esperar", msg:"Tasa en zona media. No apurar capital; esperar mejor ventana.", thr: thrYellow };
+  }
+  return { type:"bad", label:"🔴 NO CONVIENE", action:"No caucionar", msg:"Tasa deprimida. Mejor esperar suba de mercado.", thr: thrYellow };
+}
+
+async function load(){
+  try{
+    const res = await fetch(DATA_URL, {cache:"no-store"});
+    if(!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+
+    // Esperado (lo vamos a generar desde el bot):
+    // {
+    //   "ts": "2026-01-19T12:36:19-03:00",
+    //   "rate_1d": 34.5,
+    //   "source": "BMB|BYMA",
+    //   "note": "..."
+    // }
+
+    const rate = Number(data.rate_1d);
+    const ts = data.ts || "";
+    const src = data.source || "—";
+
+    const evald = computeBalanced(rate);
+
+    document.getElementById("rate1d").textContent = fmtPct(rate);
+    document.getElementById("thr").textContent = fmtPct(evald.thr);
+    document.getElementById("action").textContent = evald.action;
+
+    setPill(evald.type, evald.label);
+
+    const note = data.note ? (" " + data.note) : "";
+    document.getElementById("msg").textContent = evald.msg + note;
+
+    document.getElementById("updated").textContent = ts ? ("Última actualización: " + ts) : "Última actualización: —";
+    document.getElementById("tech").innerHTML = "Fuente: <code>" + src + "</code><br/>Archivo: <code>docs/data/latest.json</code>";
+
+  }catch(err){
+    setPill("bad","⚠️ Error cargando datos");
+    document.getElementById("msg").textContent =
+      "No se pudo leer docs/data/latest.json. Verificá que el bot lo esté generando y commiteando. ("+ err.message +")";
+    document.getElementById("tech").textContent = "Error: " + err.message;
+    document.getElementById("updated").textContent = "Última actualización: —";
+  }
+}
+
+load();
+setInterval(()=>location.reload(), 60000);
+</script>
+</body>
+</html>
