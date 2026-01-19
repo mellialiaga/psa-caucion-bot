@@ -3,7 +3,6 @@ name: PSA Caucion Bot
 on:
   workflow_dispatch:
   schedule:
-    # Cada 10 minutos (UTC). Ajustá si querés.
     - cron: "*/10 * * * *"
 
 permissions:
@@ -16,7 +15,6 @@ concurrency:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -33,34 +31,36 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run bot
+      - name: Run PSA Caucion Bot
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           USERS_JSON: ${{ secrets.USERS_JSON }}
+
           MODE: ${{ vars.MODE }}
+          SOURCE_NAME: ${{ vars.SOURCE_NAME }}
           BYMA_HTML_URL: ${{ vars.BYMA_HTML_URL }}
+
           THRESH_RED: ${{ vars.THRESH_RED }}
           THRESH_GREEN: ${{ vars.THRESH_GREEN }}
           THRESH_ROCKET: ${{ vars.THRESH_ROCKET }}
+
           DAILY_HOUR: ${{ vars.DAILY_HOUR }}
           CAPITAL_BASE: ${{ vars.CAPITAL_BASE }}
         run: |
           python caucion_alerta.py
 
-      - name: Commit dashboard/state changes (if any)
+      - name: Commit dashboard + state (if changed)
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Agrega solo lo que nos interesa versionar
           git add docs/data/latest.json .state/state.json || true
 
-          # Si no hay cambios, salimos OK
           if git diff --cached --quiet; then
             echo "No changes to commit."
             exit 0
           fi
 
-          git commit -m "Update dashboard data [skip ci]"
+          git commit -m "Update dashboard/state [skip ci]"
           git push
