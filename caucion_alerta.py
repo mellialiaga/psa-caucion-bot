@@ -1,4 +1,7 @@
-import os, re, json, requests
+import os
+import re
+import json
+import requests
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -6,255 +9,284 @@ from pathlib import Path
 # =========================
 # CONFIG
 # =========================
-# Fuente (dejamos el URL que venías usando; si lo cambiaste a BMB, ajustalo acá)
-BYMA_HTML_URL = os.getenv("BYMA_HTML_URL", "https://www.portfoliopersonal.com/Cotizaciones/Cauciones")
-
-TOKEN = os.environ.get("TG_BOT_TOKEN", "").strip()
-DEFAULT_CHAT_ID = os.environ.get("TG_CHAT_ID", "").strip()
-
-MODE = os.getenv("MODE", "PRO").upper()        # DEMO / PRO
-PROFILE = os.getenv("PROFILE", "BALANCED").upper()  # BALANCED / AGGRESSIVE / CONSERVATIVE (por ahora usamos BALANCED)
 
 TZ = ZoneInfo("America/Argentina/Cordoba")
 
-STATE_PATH = Path(".state/state.json")
-DASH_PATH = Path("docs/data/latest.json")
+# Fuente actual (ajustala si tu bot lee otra página)
+BYMA_HTML_URL = os.getenv("BYMA_HTML_URL", "https://www.bullmarketbrokers.com/Cotizaciones/cauciones")
 
-CAPITAL_BASE = float(os.getenv("CAPITAL_BASE", "38901078.37"))
+# Thresholds default (perfil BALANCED)
+THRESH_RED    = float(os.getenv("THRESH_RED", "35.5"))   # < red
+THRESH_GREEN  = float(os.getenv("THRESH_GREEN", "37.0")) # >= green
+THRESH_ROCKET = float(os.getenv("THRESH_ROCKET", "40.0"))# >= rocket
+
+DAILY_HOUR = int(os.getenv("DAILY_HOUR", "10"))  # resumen diario (hora local)
+MODE = os.getenv("MODE", "DEMO")                 # DEMO | COMMERCIAL
+
+# Capital (opcional; si no está, no calcula "ingreso diario")
+CAPITAL_BASE = float(os.getenv("CAPITAL_BASE", "0") or "0")
 DAYS_IN_YEAR = 365
 
-# Umbrales por defecto (podés ajustar por ENV si querés)
-# BALANCED: rojo <35.5, amarillo 35.5-36.9, verde >=37, rocket >=40
-BAL_RED = float(os.getenv("BAL_RED", "35.5"))
-BAL_GREEN = float(os.getenv("BAL_GREEN", "37.0"))
-BAL_ROCKET = float(os.getenv("BAL_ROCKET", "40.0"))
+# Telegram (single-user fallback)
+TG_TOKEN = os.getenv("TG_BOT_TOKEN", "").strip()
+TG_CHAT  = os.getenv("TG_CHAT_ID", "").strip()
 
-# Alertas clásicas (si las querés mantener)
-THRESH_HIGH = float(os.getenv("THRESH_HIGH", "40.0"))
-THRESH_LOW  = float(os.getenv("THRESH_LOW", "35.0"))
-DAILY_HOUR  = int(os.getenv("DAILY_HOUR", "10"))
-
-# Multiusuario (modo comercial): opcional
-# Se define como SECRET en GitHub: USERS_JSON
-# Ej: [{"name":"Pablo","chat_id":"123","capital":38901078.37,"mode":"PRO","profile":"BALANCED","enabled":true}]
+# Multi-user (opcional)
+# USERS_JSON debe ser un JSON string con estructura:
+# {"users":[{"name":"Pablo","chat_id":"123","enabled":true,"profile":"BALANCED","capital":1000000}]}
 USERS_JSON = os.getenv("USERS_JSON", "").strip()
+
+# State + dashboard
+STATE_PATH = Path(".state/state.json")
+DASH_PATH  = Path("docs/data/latest.json")
 
 
 # =========================
 # HELPERS
 # =========================
-def send(chat_id: str, msg: str):
-    if not TOKEN or not chat_id:
-        return
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    r = requests.post(url, json={"chat_id": chat_id, "text": msg}, timeout=20)
-    r.raise_for_status()
+
+def safe_float(x, default=None):
+    try:
+        return float(x)
+    except Exception:
+        return default
 
 
-def money(n: float) -> str:
-    # Formato AR simple: 1.234.567
-    s = f"{n:,.0f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    return f"${s}"
+def ensure_dirs():
+    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    DASH_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def load_state():
     if STATE_PATH.exists():
-        return json.loads(STATE_PATH.read_text(encoding="utf-8"))
-    return {"last_state": "", "last_daily": ""}
+        try:
+            return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
 
 
-def save_state(state):
-    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    STATE_PATH.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+def save_state(st):
+    ensure_dirs()
+    STATE_PATH.write_text(json.dumps(st, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def get_users():
-    # Si hay USERS_JSON, usamos multiusuario
+def tg_send(token: str, chat_id: str, msg: str):
+    if not token or not chat_id:
+        return  # No rompe nunca si falta config
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    try:
+        r = requests.post(url, json={"chat_id": chat_id, "text": msg}, timeout=20)
+        r.raise_for_status()
+    except Exception:
+        # Nunca rompemos por Telegram
+        pass
+
+
+def parse_users():
+    """
+    Devuelve lista de usuarios a notificar.
+    Si USERS_JSON no existe, vuelve a modo single-user con TG_CHAT_ID.
+    """
+    users = []
+
     if USERS_JSON:
         try:
-            users = json.loads(USERS_JSON)
-            # Filtra enabled true por defecto
-            out = []
-            for u in users:
-                if u.get("enabled", True) is False:
+            payload = json.loads(USERS_JSON)
+            raw = payload.get("users", [])
+            for u in raw:
+                if not u.get("enabled", True):
                     continue
-                out.append({
-                    "name": u.get("name", "user"),
+                users.append({
+                    "name": u.get("name", "Usuario"),
                     "chat_id": str(u.get("chat_id", "")).strip(),
-                    "capital": float(u.get("capital", CAPITAL_BASE)),
-                    "mode": str(u.get("mode", MODE)).upper(),
-                    "profile": str(u.get("profile", PROFILE)).upper(),
+                    "profile": u.get("profile", "BALANCED"),
+                    "capital": float(u.get("capital", CAPITAL_BASE or 0) or 0),
                 })
-            return out
         except Exception:
-            # fallback a 1 usuario
-            pass
+            # Si el JSON está mal, caemos a single-user
+            users = []
 
-    # Fallback: mono usuario
-    if DEFAULT_CHAT_ID:
-        return [{
-            "name": "default",
-            "chat_id": DEFAULT_CHAT_ID,
-            "capital": CAPITAL_BASE,
-            "mode": MODE,
-            "profile": PROFILE
-        }]
-    return []
+    if not users and TG_CHAT:
+        users.append({
+            "name": "Pablo",
+            "chat_id": TG_CHAT,
+            "profile": "BALANCED",
+            "capital": CAPITAL_BASE or 0
+        })
+
+    return users
 
 
-def fetch_rate_1d():
+def compute_signal(rate: float):
     """
-    Lee la tasa 1D en PESOS desde el HTML.
-    Importante: esto depende del sitio. Si cambia el markup, ajustamos el regex.
-    """
-    headers = {"User-Agent": "Mozilla/5.0"}
-    html = requests.get(BYMA_HTML_URL, headers=headers, timeout=25).text
-
-    # Regex actual: busca "1 DÍA" + "PESOS" y toma el primer porcentaje luego
-    m = re.search(r"1\s*D[IÍ]A.*?PESOS.*?(\d{1,2}[.,]\d{1,2})\s*%", html, re.I | re.S)
-    if not m:
-        return None
-
-    return float(m.group(1).replace(",", "."))
-
-
-def eval_balanced(rate: float):
-    """
-    Devuelve estado, acción y texto para perfil BALANCED.
+    Semáforo BALANCED por defecto.
     """
     if rate is None:
         return {
-            "status": "NO_DATA",
-            "label": "⚠️ Sin datos",
+            "status": "ERR",
+            "status_label": "⚠️ SIN DATOS",
             "action": "—",
-            "explain": "No se pudo leer la tasa desde la fuente."
+            "explain": "No se pudo leer la tasa."
         }
 
-    if rate >= BAL_ROCKET:
+    if rate >= THRESH_ROCKET:
         return {
             "status": "ROCKET",
-            "label": "🚀 OPORTUNIDAD FUERTE",
+            "status_label": "🚀 OPORTUNIDAD FUERTE",
             "action": "Caucionar",
-            "explain": f"Tasa excepcional (≥ {BAL_ROCKET:.2f}%)."
+            "explain": f"Tasa excepcional (≥ {THRESH_ROCKET:.2f}%)."
         }
 
-    if rate >= BAL_GREEN:
+    if rate >= THRESH_GREEN:
         return {
             "status": "GREEN",
-            "label": "🟢 CONVIENE CAUCIONAR",
+            "status_label": "🟢 CONVIENE CAUCIONAR",
             "action": "Caucionar",
-            "explain": f"Tasa por encima del umbral balanceado (≥ {BAL_GREEN:.2f}%)."
+            "explain": f"Tasa por encima del umbral (≥ {THRESH_GREEN:.2f}%)."
         }
 
-    if rate >= BAL_RED:
+    if rate >= THRESH_RED:
         return {
             "status": "YELLOW",
-            "label": "🟡 ESPERAR",
+            "status_label": "🟡 ESPERAR",
             "action": "Esperar",
-            "explain": f"Tasa en zona media (≥ {BAL_RED:.2f}% y < {BAL_GREEN:.2f}%)."
+            "explain": f"Tasa en zona media (≥ {THRESH_RED:.2f}% y < {THRESH_GREEN:.2f}%)."
         }
 
     return {
         "status": "RED",
-        "label": "🔴 NO CONVIENE",
+        "status_label": "🔴 NO CONVIENE",
         "action": "No caucionar",
-        "explain": f"Tasa deprimida (< {BAL_RED:.2f}%)."
+        "explain": f"Tasa deprimida (< {THRESH_RED:.2f}%)."
     }
 
 
-def write_dashboard(now_iso: str, rate: float, source: str, note: str, summary: dict, users: list):
-    DASH_PATH.parent.mkdir(parents=True, exist_ok=True)
+def fetch_rate():
+    """
+    Extrae la tasa 1D desde HTML.
+    Muy tolerante: intenta encontrar "1 día" y un porcentaje cercano.
+    """
+    headers = {"User-Agent": "Mozilla/5.0"}
+
+    try:
+        html = requests.get(BYMA_HTML_URL, headers=headers, timeout=25).text
+    except Exception:
+        return None
+
+    # Busca un porcentaje en contexto "1D / 1 día"
+    # Esto es genérico porque las webs cambian.
+    # Podés ajustar regex si BMB cambia su HTML.
+    m = re.search(r"(1\s*D(I|Í)A|1D).*?(\d{1,2}[.,]\d{1,3})\s*%", html, re.I | re.S)
+    if not m:
+        # fallback: busca el primer porcentaje razonable en la página
+        m2 = re.search(r"(\d{1,2}[.,]\d{1,3})\s*%", html, re.I)
+        if not m2:
+            return None
+        return float(m2.group(1).replace(",", "."))
+    return float(m.group(3).replace(",", "."))
+
+
+def write_dashboard(now: datetime, rate: float, signal: dict, users_count: int):
+    ensure_dirs()
+
     payload = {
-        "ts": now_iso,
-        "source": source,
+        "ts": now.strftime("%Y-%m-%d %H:%M:%S %Z"),
+        "source": "Bull Market Brokers",
+        "mode": MODE,
         "rate_1d": rate,
+        "status": signal.get("status"),
+        "status_label": signal.get("status_label"),
+        "action": signal.get("action"),
+        "explain": signal.get("explain"),
         "profile": "BALANCED",
         "thresholds": {
-            "red_lt": BAL_RED,
-            "green_gte": BAL_GREEN,
-            "rocket_gte": BAL_ROCKET
+            "red": THRESH_RED,
+            "green": THRESH_GREEN,
+            "rocket": THRESH_ROCKET
         },
-        "status": summary.get("status"),
-        "status_label": summary.get("label"),
-        "action": summary.get("action"),
-        "explain": summary.get("explain"),
-        "note": note,
-        "users_enabled": len(users)
+        "users_enabled": users_count,
+        "note": "Dashboard informativo. No ejecuta operaciones ni brinda asesoramiento financiero."
     }
+
     DASH_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 # =========================
 # MAIN
 # =========================
-def main():
-    now = datetime.now(TZ)
-    now_iso = now.isoformat(timespec="seconds")
 
-    users = get_users()
+def main():
+    ensure_dirs()
+    now = datetime.now(TZ)
     st = load_state()
 
-    # 1) Fetch
-    rate = None
-    try:
-        rate = fetch_rate_1d()
-    except Exception:
-        rate = None
+    users = parse_users()
+    users_count = len(users)
 
-    # 2) Dashboard summary (BALANCED)
-    summary = eval_balanced(rate)
-    source = "BYMA"
-    note = "Perfil BALANCED. Herramienta informativa (no asesoramiento financiero)."
+    rate = fetch_rate()
+    signal = compute_signal(rate)
 
-    # Escribimos dashboard SIEMPRE (aun con error), para ver fallas rápido
-    write_dashboard(now_iso, rate, source, note, summary, users)
+    # Siempre escribimos dashboard (incluso si rate None)
+    write_dashboard(now, rate, signal, users_count)
 
-    # 3) Alerts (por usuario)
-    # Si no hay usuarios, no hay a quién avisar.
-    if not users:
+    # Si no hay token o no hay usuarios, nunca rompemos
+    if not TG_TOKEN or users_count == 0:
+        save_state(st)
         return
 
-    # Error reading rate -> avisar 1 vez (a todos)
+    # Estado global (para no spamear)
+    last_state = st.get("last_state", "")
+    last_err_sent = st.get("last_err_sent", False)
+    last_daily = st.get("last_daily", "")
+
+    # Error de lectura: avisar una vez
     if rate is None:
-        if st.get("last_state") != "ERR":
+        if not last_err_sent:
             for u in users:
-                if u["mode"] == "DEMO":
-                    continue
-                send(u["chat_id"], "⚠️ No pude leer la tasa de Caución 1D (fuente).")
-            st["last_state"] = "ERR"
-            save_state(st)
+                tg_send(TG_TOKEN, u["chat_id"], "⚠️ No pude leer la tasa de Caución 1D (BMB).")
+            st["last_err_sent"] = True
+        st["last_state"] = "ERR"
+        save_state(st)
         return
 
-    # Ingreso estimado diario por usuario (informativo)
-    # (No lo mandamos siempre para no spamear, pero queda listo para mensajes premium)
-    # daily_income = capital * (rate/100) / 365
+    # Si vuelve a haber datos, reseteamos flag error
+    st["last_err_sent"] = False
 
-    # Estado por umbrales "clásicos" (alto/bajo)
-    state = "MID"
-    if rate >= THRESH_HIGH:
-        state = "HIGH"
-    if rate <= THRESH_LOW:
-        state = "LOW"
+    # Alertas por cambio de semáforo (solo para GREEN/ROCKET/RED, amarillo no spamea)
+    curr = signal["status"]
 
-    # Cambio de estado -> alerta
-    if state != st.get("last_state"):
-        for u in users:
-            if u["mode"] == "DEMO":
-                # DEMO: limitamos alertas
-                continue
+    if curr != last_state:
+        # 🔥 Mensaje principal
+        if curr in ("GREEN", "ROCKET"):
+            msg = f"{signal['status_label']}\nTasa 1D: {rate:.2f}%\n{signal['explain']}"
+        elif curr == "RED":
+            msg = f"{signal['status_label']}\nTasa 1D: {rate:.2f}%\n👉 Evaluar alternativas."
+        else:
+            msg = None  # YELLOW no se notifica por cambio (opcional)
 
-            if state == "HIGH":
-                send(u["chat_id"], f"🟢 OPORTUNIDAD CAUCIÓN 1D\nTasa: {rate:.2f}%")
-            elif state == "LOW":
-                send(u["chat_id"], f"⚠️ WARNING CAUCIÓN 1D\nTasa: {rate:.2f}%\n👉 Evaluar alternativas")
-        st["last_state"] = state
+        if msg:
+            for u in users:
+                tg_send(TG_TOKEN, u["chat_id"], msg)
 
-    # Resumen diario (una vez por día)
+        st["last_state"] = curr
+
+    # Resumen diario a cierta hora (1 vez por día)
     today = now.strftime("%Y-%m-%d")
-    if now.hour == DAILY_HOUR and st.get("last_daily") != today:
-        # En DEMO, podés mandar igual 1 resumen
+    if now.hour == DAILY_HOUR and last_daily != today:
+        # Si hay capital cargado, calcula ingreso estimado por día
+        cap = CAPITAL_BASE
+        daily_income = None
+        if cap and rate:
+            daily_income = cap * (rate / 100.0) / DAYS_IN_YEAR
+
+        base = f"📊 Resumen diario Caución 1D\nTasa: {rate:.2f}%\nEstado: {signal['status_label']}\nAcción: {signal['action']}"
+        if daily_income is not None:
+            base += f"\nEstimación ingreso/día (sobre {cap:,.0f}): ${daily_income:,.0f}".replace(",", ".")
+
         for u in users:
-            send(u["chat_id"], f"📊 Resumen diario Caución 1D\nTasa: {rate:.2f}%\nEstado: {summary['label']}")
+            tg_send(TG_TOKEN, u["chat_id"], base)
+
         st["last_daily"] = today
 
     save_state(st)
