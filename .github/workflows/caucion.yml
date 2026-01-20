@@ -3,31 +3,19 @@ name: PSA Caucion Bot
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/15 * * * *"   # cada 15 minutos
-
-permissions:
-  contents: write   # 🔴 CLAVE para poder pushear dashboard/state
+    - cron: "*/30 * * * *"
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: true
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+      - run: pip install -r requirements.txt
 
       - name: Run PSA Caucion Bot
         env:
@@ -35,20 +23,12 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           USERS_JSON: ${{ secrets.USERS_JSON }}
           MODE: demo
+        run: python caucion_alerta.py
+
+      - name: Commit dashboard + state
         run: |
-          python caucion_alerta.py
-
-      - name: Commit dashboard + state (if changed)
-        run: |
-          git config user.name "psa-caucion-bot"
-          git config user.email "actions@github.com"
-
-          git add docs/index.html .state/state.json || true
-
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-            exit 0
-          fi
-
-          git commit -m "chore: update dashboard and state"
-          git push
+          git config user.name "psa-bot"
+          git config user.email "psa-bot@users.noreply.github.com"
+          git add docs .state || true
+          git commit -m "Update dashboard" || true
+          git push || true
