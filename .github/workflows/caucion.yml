@@ -1,9 +1,9 @@
 name: PSA Caucion Bot
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "0 * * * 1-5"  # cada hora L-V (UTC). Ajustá si querés.
+  workflow_dispatch:
 
 jobs:
   run-bot:
@@ -23,9 +23,15 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           USERS_JSON: ${{ secrets.USERS_JSON }}
           MODE: demo
+
+          # Opcionales (si no los seteás, usa defaults)
+          PCTL_WINDOW_DAYS: "60"
+          MIN_POINTS_FOR_PCTLS: "20"
+          NOTIFY_ON_BAND_CHANGE_ONLY: "1"
+          DEDUP_MINUTES: "10"
         run: python caucion_alerta.py
 
-      - name: Commit dashboard + state
+      - name: Commit dashboard + state + data
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
