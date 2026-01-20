@@ -23,6 +23,9 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           USERS_JSON: ${{ secrets.USERS_JSON }}
           MODE: demo
+          SPREAD_ALERT_MIN: "0.50"
+          SPREAD_ALERT_ONCE_PER_DAY: "1"
+          DAILY_HOUR: "10"
 
           # Opcionales (si no los seteás, usa defaults)
           PCTL_WINDOW_DAYS: "60"
