@@ -1,134 +1,92 @@
-import os
-import re
-import json
-import requests
+import os, re, json, requests
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
 
 # =========================
-# Helpers: ENV safe parsing
+# Config
 # =========================
-
-def env_str(name: str, default: str = "") -> str:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    raw = raw.strip()
-    return raw if raw != "" else default
-
-def env_float(name: str, default: float) -> float:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    raw = raw.strip()
-    if raw == "":
-        return default
-    return float(raw.replace(",", "."))
-
-def env_int(name: str, default: int) -> int:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    raw = raw.strip()
-    if raw == "":
-        return default
-    return int(raw)
-
-def env_bool(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    raw = raw.strip().lower()
-    if raw in ("1", "true", "yes", "y", "on"):
-        return True
-    if raw in ("0", "false", "no", "n", "off"):
-        return False
-    return default
-
-
-# =========================
-# Config (defaults)
-# =========================
-
 TZ = ZoneInfo("America/Argentina/Cordoba")
-
-TOKEN = env_str("TG_BOT_TOKEN")
-SINGLE_CHAT_ID = env_str("TG_CHAT_ID")  # fallback single user
-
-MODE = env_str("MODE", "commercial").lower()  # demo | commercial
-SOURCE_NAME = env_str("SOURCE_NAME", "BMB/BYMA")
-BYMA_HTML_URL = env_str("BYMA_HTML_URL", "https://www.bullmarketbrokers.com/Cotizaciones/cauciones")
-
-# Thresholds default (used if not specified per-user)
-DEF_THRESH_RED    = env_float("THRESH_RED", 35.5)
-DEF_THRESH_GREEN  = env_float("THRESH_GREEN", 40.0)
-DEF_THRESH_ROCKET = env_float("THRESH_ROCKET", 45.0)
-
-DEF_DAILY_HOUR = env_int("DAILY_HOUR", 10)
-DEF_CAPITAL_BASE = env_float("CAPITAL_BASE", 38901078.37)
-
 DAYS_IN_YEAR = 365
 
-# State storage (repo)
-STATE_PATH = Path(".state/state.json")
+DEF_SOURCE_NAME = "Bull Market Brokers"
+DEF_BYMA_HTML_URL = "https://www.bullmarketbrokers.com/Cotizaciones/cauciones"
 
-# Dashboard (GitHub Pages via /docs)
-DASH_DIR = Path("docs")
-DASH_DATA = DASH_DIR / "data"
-DASH_LATEST = DASH_DATA / "latest.json"
-DASH_HISTORY = DASH_DATA / "history.json"  # lightweight rolling log
+STATE_DIR = Path(".state")
+STATE_PATH = STATE_DIR / "state.json"
 
-# Monitoring tenors (days)
-TENORS_DEFAULT = [1, 7, 30]  # podes ajustar
-HTTP_TIMEOUT = 25
-
+DOCS_DIR = Path("docs")
+DASHBOARD_PATH = DOCS_DIR / "index.html"
 
 # =========================
+# Helpers: env robustos
+# =========================
+def env_str(name: str, default: str = "") -> str:
+    v = os.getenv(name)
+    if v is None:
+        return default
+    v = v.strip()
+    return v if v != "" else default
+
+def env_float(name: str, default: float) -> float:
+    v = os.getenv(name)
+    if v is None:
+        return default
+    v = v.strip()
+    if v == "":
+        return default
+    try:
+        return float(v)
+    except ValueError:
+        return default
+
+def env_int(name: str, default: int) -> int:
+    v = os.getenv(name)
+    if v is None:
+        return default
+    v = v.strip()
+    if v == "":
+        return default
+    try:
+        return int(v)
+    except ValueError:
+        return default
+
+# =========================
+# Runtime config
+# =========================
+MODE = env_str("MODE", "demo").lower()  # demo | commercial
+
+SOURCE_NAME = env_str("SOURCE_NAME", DEF_SOURCE_NAME)
+BYMA_HTML_URL = env_str("BYMA_HTML_URL", DEF_BYMA_HTML_URL)
+
+# Umbrales (si faltan o están vacíos, usa defaults)
+THRESH_RED    = env_float("THRESH_RED", 35.5)
+THRESH_GREEN  = env_float("THRESH_GREEN", 38.0)
+THRESH_ROCKET = env_float("THRESH_ROCKET", 40.0)
+
+# Resumen diario
+DAILY_HOUR = env_int("DAILY_HOUR", 10)
+
+# Capital (para estimar ingreso diario)
+CAPITAL_BASE = env_float("CAPITAL_BASE", 38901078.37)
+
 # Telegram
-# =========================
+TOKEN = env_str("TG_BOT_TOKEN", "")
+DEFAULT_CHAT_ID = env_str("TG_CHAT_ID", "")
 
-def send_message(chat_id: str, text: str) -> None:
-    if not TOKEN:
-        raise RuntimeError("Missing TG_BOT_TOKEN")
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    r = requests.post(url, json={"chat_id": chat_id, "text": text}, timeout=20)
-    r.raise_for_status()
+# Multi-user:
+# USERS_JSON ejemplo:
+# [{"name":"Pablo","chat_id":"123","capital":38901078.37},{"name":"Javier","chat_id":"456","capital":2000000}]
+USERS_JSON_RAW = env_str("USERS_JSON", "")
 
+def load_users():
+    users = []
 
-# =========================
-# Formatting
-# =========================
-
-def pct(n: float) -> str:
-    return f"{n:.2f}%"
-
-def money(n: float) -> str:
-    # AR format: 1.234.567
-    s = f"{n:,.0f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    return f"${s}"
-
-def daily_income(capital: float, tna: float) -> float:
-    return capital * (tna / 100.0) / DAYS_IN_YEAR
-
-
-# =========================
-# Users (multi-user)
-# USERS_JSON example:
-# [
-#   {"chat_id":"123", "name":"Pablo", "capital_base":38901078.37, "daily_hour":10,
-#    "thresh_red":35.5, "thresh_green":40.0, "thresh_rocket":45.0, "tenors":[1,7,30]}
-# ]
-# =========================
-
-def load_users() -> List[Dict[str, Any]]:
-    users_json = os.getenv("USERS_JSON")
-    users: List[Dict[str, Any]] = []
-
-    if users_json and users_json.strip() != "":
+    # 1) Si viene USERS_JSON, usarlo
+    if USERS_JSON_RAW:
         try:
-            parsed = json.loads(users_json)
+            parsed = json.loads(USERS_JSON_RAW)
             if isinstance(parsed, list):
                 for u in parsed:
                     if not isinstance(u, dict):
@@ -136,429 +94,293 @@ def load_users() -> List[Dict[str, Any]]:
                     chat_id = str(u.get("chat_id", "")).strip()
                     if not chat_id:
                         continue
-                    users.append(u)
+                    users.append({
+                        "name": str(u.get("name", "Usuario")).strip() or "Usuario",
+                        "chat_id": chat_id,
+                        "capital": float(u.get("capital", CAPITAL_BASE)) if str(u.get("capital", "")).strip() != "" else CAPITAL_BASE,
+                    })
         except Exception:
-            # fallback if json invalid
+            # si está mal formado, caemos al fallback
             users = []
 
-    # fallback single user
-    if not users:
-        if not SINGLE_CHAT_ID:
-            raise RuntimeError("Missing USERS_JSON and TG_CHAT_ID. Provide at least one.")
+    # 2) Fallback: single-user con TG_CHAT_ID
+    if not users and DEFAULT_CHAT_ID:
         users = [{
-            "chat_id": SINGLE_CHAT_ID,
-            "name": "Usuario",
-            "capital_base": DEF_CAPITAL_BASE,
-            "daily_hour": DEF_DAILY_HOUR,
-            "thresh_red": DEF_THRESH_RED,
-            "thresh_green": DEF_THRESH_GREEN,
-            "thresh_rocket": DEF_THRESH_ROCKET,
-            "tenors": TENORS_DEFAULT
+            "name": "Pablo",
+            "chat_id": DEFAULT_CHAT_ID,
+            "capital": CAPITAL_BASE
         }]
-
-    # normalize defaults per user
-    for u in users:
-        u["name"] = str(u.get("name", "Usuario")).strip() or "Usuario"
-        u["capital_base"] = float(u.get("capital_base", DEF_CAPITAL_BASE) or DEF_CAPITAL_BASE)
-        u["daily_hour"] = int(u.get("daily_hour", DEF_DAILY_HOUR) or DEF_DAILY_HOUR)
-        u["thresh_red"] = float(u.get("thresh_red", DEF_THRESH_RED) or DEF_THRESH_RED)
-        u["thresh_green"] = float(u.get("thresh_green", DEF_THRESH_GREEN) or DEF_THRESH_GREEN)
-        u["thresh_rocket"] = float(u.get("thresh_rocket", DEF_THRESH_ROCKET) or DEF_THRESH_ROCKET)
-        ten = u.get("tenors", TENORS_DEFAULT)
-        if not isinstance(ten, list) or not ten:
-            ten = TENORS_DEFAULT
-        u["tenors"] = [int(x) for x in ten if str(x).strip().isdigit()]
-        if not u["tenors"]:
-            u["tenors"] = TENORS_DEFAULT
 
     return users
 
-
-# =========================
-# Fetch rates
-# - robust parsing for multiple tenors
-# =========================
-
-def fetch_html(url: str) -> str:
-    headers = {"User-Agent": "Mozilla/5.0"}
-    r = requests.get(url, headers=headers, timeout=HTTP_TIMEOUT)
+def send(chat_id: str, msg: str):
+    if not TOKEN:
+        raise RuntimeError("Falta TG_BOT_TOKEN (Secret).")
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    r = requests.post(url, json={"chat_id": chat_id, "text": msg}, timeout=25)
     r.raise_for_status()
-    return r.text
 
-def _find_rate_for_tenor(html: str, days: int) -> Optional[float]:
-    """
-    Tries to extract rate (TNA) for given tenor in days from an HTML page.
-    This is heuristic-based; adjust regex to match BMB/BYMA markup if needed.
-    """
-    # Common variants: "1D", "1 día", "1 dias", "1 días", "7 días", etc.
-    day_patterns = [
-        rf"{days}\s*D[IÍ]A[S]?",          # 1 DIA / 7 DÍAS
-        rf"{days}\s*D",                   # 1D / 7D
-        rf"\({days}\s*d[ií]a[s]?\)",      # (1 días)
-    ]
+def money(n: float) -> str:
+    # Formato AR: $1.234.567
+    s = f"{n:,.0f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"${s}"
 
-    # Accept numbers like 34,500 or 34.500 or 34.50
-    rate_pattern = r"(\d{1,3}(?:[.,]\d{1,3})?)"
-
-    for dp in day_patterns:
-        # Strategy: find the block around the tenor and then capture a nearby "Tasa" number
-        m = re.search(rf"({dp}).{{0,400}}?Tasa.{{0,120}}?{rate_pattern}", html, re.I | re.S)
-        if m:
-            val = m.group(2)
-            try:
-                return float(val.replace(".", "").replace(",", "."))
-            except Exception:
-                pass
-
-        # Another strategy: capture first % after tenor
-        m2 = re.search(rf"({dp}).{{0,400}}?{rate_pattern}\s*%", html, re.I | re.S)
-        if m2:
-            val = m2.group(2)
-            try:
-                return float(val.replace(".", "").replace(",", "."))
-            except Exception:
-                pass
-
-    return None
-
-def fetch_rates(days_list: List[int]) -> Dict[int, Optional[float]]:
-    html = fetch_html(BYMA_HTML_URL)
-    out: Dict[int, Optional[float]] = {}
-    for d in days_list:
-        out[d] = _find_rate_for_tenor(html, d)
-    return out
-
+def pct(n: float) -> str:
+    return f"{n:.2f}%"
 
 # =========================
-# State
+# Scraping: 1D y 7D
 # =========================
+def fetch_rates():
+    """
+    Devuelve dict: {"1D": float|None, "7D": float|None}
+    Heurística:
+    - Busca patrones cercanos a "1 día" / "7 días" y toma el primer % en esa zona.
+    """
+    headers = {"User-Agent": "Mozilla/5.0"}
+    html = requests.get(BYMA_HTML_URL, headers=headers, timeout=30).text
 
-def load_state() -> Dict[str, Any]:
+    def find_rate(days_label: str):
+        # Busca algo como "1 día" ... "%" (tasa)
+        # tolera separadores coma/punto
+        patterns = [
+            rf"{days_label}\s*D[IÍ]A.*?(\d{{1,2}}[.,]\d{{1,3}})\s*%",
+            rf"{days_label}\s*D[IÍ]AS.*?(\d{{1,2}}[.,]\d{{1,3}})\s*%",
+        ]
+        for pat in patterns:
+            m = re.search(pat, html, re.I | re.S)
+            if m:
+                return float(m.group(1).replace(",", "."))
+        return None
+
+    r1 = find_rate("1")
+    r7 = find_rate("7")
+
+    return {"1D": r1, "7D": r7, "source_url": BYMA_HTML_URL}
+
+# =========================
+# State + dashboard
+# =========================
+def load_state():
     if STATE_PATH.exists():
         try:
             return json.loads(STATE_PATH.read_text(encoding="utf-8"))
         except Exception:
             pass
     return {
-        "last_err": False,
-        "last_daily": {},      # chat_id -> yyyy-mm-dd
-        "last_band": {},       # chat_id -> {"1":"GREEN", "7":"RED", ...}
-        "last_sent": {},       # chat_id -> {"key":"timestamp"}
-        "last_rates": {},      # tenor->last known rate
+        "last_band": "",               # RED|GREEN|ROCKET|MID|ERR
+        "last_daily": "",              # YYYY-MM-DD
+        "last_rate_1d": None,
+        "last_rate_7d": None,
+        "last_opportunity": "",        # texto para no spamear
         "updated_at": ""
     }
 
-def save_state(state: Dict[str, Any]) -> None:
-    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+def save_state(st: dict):
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    STATE_PATH.write_text(json.dumps(st, ensure_ascii=False, indent=2), encoding="utf-8")
 
-def now_str() -> str:
-    return datetime.now(TZ).isoformat(timespec="seconds")
+def render_dashboard(st: dict):
+    DOCS_DIR.mkdir(parents=True, exist_ok=True)
 
+    rate_1d = st.get("last_rate_1d")
+    rate_7d = st.get("last_rate_7d")
+
+    def safe(v):
+        return "—" if v is None else f"{v:.2f}%"
+
+    html = f"""<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>PSA Caución Bot — Dashboard</title>
+  <style>
+    body {{ font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; background:#0b1220; color:#e8eefc; }}
+    .wrap {{ max-width: 860px; margin: 0 auto; }}
+    .card {{ background:#121a2c; border:1px solid #223055; border-radius:16px; padding:18px; margin:14px 0; box-shadow: 0 10px 25px rgba(0,0,0,.25); }}
+    .kpi {{ display:flex; gap:12px; flex-wrap:wrap; }}
+    .kpi .item {{ flex:1; min-width:220px; background:#0f1730; border:1px solid #223055; border-radius:14px; padding:14px; }}
+    .label {{ opacity:.8; font-size:12px; }}
+    .value {{ font-size:28px; font-weight:700; margin-top:4px; }}
+    .small {{ opacity:.85; font-size:13px; line-height:1.4; }}
+    a {{ color:#9ad2ff; }}
+    .badge {{ display:inline-block; padding:6px 10px; border-radius:999px; background:#1b2a4d; border:1px solid #2a4172; font-size:12px; }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1 style="margin:0 0 8px 0;">PSA Caución Bot — Dashboard</h1>
+      <div class="small">Estado del bot y últimas tasas detectadas.</div>
+      <div style="margin-top:10px;">
+        <span class="badge">Modo: {MODE}</span>
+        <span class="badge">Fuente: {SOURCE_NAME}</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="kpi">
+        <div class="item">
+          <div class="label">Tasa 1D</div>
+          <div class="value">{safe(rate_1d)}</div>
+        </div>
+        <div class="item">
+          <div class="label">Tasa 7D</div>
+          <div class="value">{safe(rate_7d)}</div>
+        </div>
+        <div class="item">
+          <div class="label">Última actualización</div>
+          <div class="value" style="font-size:18px;">{st.get("updated_at","—") or "—"}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 8px 0;">Config</h3>
+      <div class="small">
+        Umbrales: RED &lt;= {THRESH_RED:.2f}% | GREEN &gt;= {THRESH_GREEN:.2f}% | ROCKET &gt;= {THRESH_ROCKET:.2f}%<br/>
+        Fuente: <a href="{BYMA_HTML_URL}" target="_blank" rel="noopener">{BYMA_HTML_URL}</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="small">© PSA Caución Bot</div>
+    </div>
+  </div>
+</body>
+</html>
+"""
+    DASHBOARD_PATH.write_text(html, encoding="utf-8")
 
 # =========================
-# Decision logic (balanced)
+# Decision logic
 # =========================
-
-def band_for_rate(rate: float, red: float, green: float, rocket: float) -> str:
-    if rate >= rocket:
+def band_for(rate_1d: float | None):
+    if rate_1d is None:
+        return "ERR"
+    if rate_1d >= THRESH_ROCKET:
         return "ROCKET"
-    if rate >= green:
+    if rate_1d >= THRESH_GREEN:
         return "GREEN"
-    if rate <= red:
+    if rate_1d <= THRESH_RED:
         return "RED"
     return "MID"
 
-def build_alert_text(user: Dict[str, Any], tenor: int, rate: float) -> str:
-    name = user["name"]
-    cap = float(user["capital_base"])
-    di = daily_income(cap, rate)
+def opportunity_text(rates: dict) -> str:
+    r1 = rates.get("1D")
+    r7 = rates.get("7D")
 
-    prefix = ""
-    if MODE == "demo":
-        prefix = "🧪 DEMO | "
+    # Si no hay data, nada
+    if r1 is None and r7 is None:
+        return ""
 
-    return (
-        f"{prefix}📌 {name} | Caución {tenor}D ({SOURCE_NAME})\n"
-        f"📈 Tasa (TNA): {pct(rate)}\n"
-        f"💰 Ingreso estimado diario (sobre {money(cap)}): {money(di)}\n"
-        f"🕒 {now_str()}"
-    )
-
-def should_send_transition(prev_band: str, new_band: str) -> bool:
-    # Only notify on meaningful band changes
-    if prev_band != new_band and new_band in ("RED", "GREEN", "ROCKET"):
-        return True
-    return False
-
-
-# =========================
-# Dashboard generation
-# =========================
-
-def ensure_dashboard_assets() -> None:
-    DASH_DIR.mkdir(parents=True, exist_ok=True)
-    (DASH_DIR / "data").mkdir(parents=True, exist_ok=True)
-
-    # Minimal static dashboard (index + app.js)
-    index_path = DASH_DIR / "index.html"
-    app_path = DASH_DIR / "app.js"
-    style_path = DASH_DIR / "style.css"
-
-    if not index_path.exists():
-        index_path.write_text("""<!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>PSA Caución Bot | Dashboard</title>
-  <link rel="stylesheet" href="./style.css"/>
-</head>
-<body>
-  <header>
-    <h1>PSA Caución Bot</h1>
-    <p class="sub">Dashboard simple (GitHub Pages) – últimas tasas y estado</p>
-  </header>
-
-  <main>
-    <section class="card">
-      <h2>Última actualización</h2>
-      <div id="meta">Cargando…</div>
-    </section>
-
-    <section class="card">
-      <h2>Últimas tasas</h2>
-      <table>
-        <thead>
-          <tr><th>Plazo</th><th>Tasa (TNA)</th><th>Banda</th></tr>
-        </thead>
-        <tbody id="rates"></tbody>
-      </table>
-    </section>
-
-    <section class="card">
-      <h2>Historial (últimos puntos)</h2>
-      <div id="history">Cargando…</div>
-    </section>
-  </main>
-
-  <footer>
-    <p>Generado automáticamente por GitHub Actions.</p>
-  </footer>
-
-  <script src="./app.js"></script>
-</body>
-</html>
-""", encoding="utf-8")
-
-    if not app_path.exists():
-        app_path.write_text("""async function loadJson(path) {
-  const r = await fetch(path, { cache: "no-store" });
-  if (!r.ok) throw new Error("HTTP " + r.status);
-  return await r.json();
-}
-
-function bandEmoji(b) {
-  if (b === "ROCKET") return "🚀";
-  if (b === "GREEN") return "🟢";
-  if (b === "RED") return "🔴";
-  return "⚪";
-}
-
-(async () => {
-  try {
-    const latest = await loadJson("./data/latest.json");
-    const hist = await loadJson("./data/history.json");
-
-    document.getElementById("meta").innerHTML =
-      `<b>${latest.updated_at}</b><br/>Fuente: ${latest.source_name || "-"} | Modo: ${latest.mode || "-"}`;
-
-    const rows = Object.entries(latest.rates || {}).map(([tenor, obj]) => {
-      const rate = (obj && obj.rate != null) ? obj.rate.toFixed(2) + "%" : "N/D";
-      const band = (obj && obj.band) ? obj.band : "N/D";
-      return `<tr>
-        <td>${tenor}D</td>
-        <td>${rate}</td>
-        <td>${bandEmoji(band)} ${band}</td>
-      </tr>`;
-    }).join("");
-
-    document.getElementById("rates").innerHTML = rows || "<tr><td colspan='3'>Sin datos</td></tr>";
-
-    const h = (hist.items || []).slice(-30).reverse();
-    document.getElementById("history").innerHTML =
-      h.map(x => `• <b>${x.at}</b> — ${x.tenor}D: ${x.rate}% (${x.band})`).join("<br/>") || "Sin historial";
-  } catch (e) {
-    document.getElementById("meta").textContent = "Error cargando dashboard: " + e.message;
-  }
-})();
-""", encoding="utf-8")
-
-    if not style_path.exists():
-        style_path.write_text("""body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 0; background: #0b1220; color: #e8eefc; }
-header { padding: 24px; border-bottom: 1px solid #1d2a44; background: #0e1730; }
-h1 { margin: 0 0 6px 0; font-size: 22px; }
-.sub { margin: 0; opacity: 0.8; }
-main { max-width: 960px; margin: 0 auto; padding: 18px; display: grid; gap: 14px; }
-.card { background: #0e1730; border: 1px solid #1d2a44; border-radius: 10px; padding: 14px; }
-table { width: 100%; border-collapse: collapse; }
-th, td { padding: 10px; border-bottom: 1px solid #1d2a44; text-align: left; }
-footer { padding: 18px; text-align: center; opacity: 0.7; }
-""", encoding="utf-8")
-
-
-def update_dashboard(rates: Dict[int, Optional[float]], bands: Dict[int, str]) -> None:
-    ensure_dashboard_assets()
-    DASH_DATA.mkdir(parents=True, exist_ok=True)
-
-    latest_payload = {
-        "updated_at": now_str(),
-        "mode": MODE,
-        "source_name": SOURCE_NAME,
-        "byma_html_url": BYMA_HTML_URL,
-        "rates": {}
-    }
-
-    for tenor, rate in rates.items():
-        latest_payload["rates"][str(tenor)] = {
-            "rate": None if rate is None else float(rate),
-            "band": bands.get(tenor, "N/D")
-        }
-
-    DASH_LATEST.write_text(json.dumps(latest_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    # History (rolling)
-    history = {"items": []}
-    if DASH_HISTORY.exists():
-        try:
-            history = json.loads(DASH_HISTORY.read_text(encoding="utf-8"))
-        except Exception:
-            history = {"items": []}
-
-    items = history.get("items", [])
-    if not isinstance(items, list):
-        items = []
-
-    for tenor, rate in rates.items():
-        if rate is None:
-            continue
-        items.append({
-            "at": latest_payload["updated_at"],
-            "tenor": int(tenor),
-            "rate": round(float(rate), 2),
-            "band": bands.get(tenor, "MID")
-        })
-
-    # keep last 200
-    items = items[-200:]
-    history["items"] = items
-    DASH_HISTORY.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
-
+    # Si 7D supera a 1D por margen, alertar oportunidad en 7D
+    if r7 is not None and r1 is not None:
+        if r7 >= r1 + 1.0:  # margen configurable si querés
+            return f"📌 Oportunidad: 7D está mejor que 1D (+{(r7-r1):.2f} pp)"
+    # Si solo hay 7D
+    if r7 is not None and r1 is None:
+        return "📌 Oportunidad: detecté tasa 7D disponible"
+    return ""
 
 # =========================
 # Main
 # =========================
-
-def main() -> None:
-    users = load_users()
+def main():
+    now = datetime.now(TZ)
     st = load_state()
-    st.setdefault("last_daily", {})
-    st.setdefault("last_band", {})
-    st.setdefault("last_sent", {})
-    st.setdefault("last_rates", {})
+    users = load_users()
 
-    # union of all tenors required by any user
-    tenors_all = sorted({t for u in users for t in u["tenors"]})
-    rates = fetch_rates(tenors_all)
+    if not users:
+        raise RuntimeError("No hay usuarios configurados. Seteá TG_CHAT_ID o USERS_JSON.")
 
-    # if all None -> warn once
-    if all(rates[t] is None for t in tenors_all):
-        if not st.get("last_err", False):
+    rates = fetch_rates()
+    r1 = rates.get("1D")
+    r7 = rates.get("7D")
+
+    st["last_rate_1d"] = r1
+    st["last_rate_7d"] = r7
+    st["updated_at"] = now.isoformat()
+
+    # Dashboard siempre (aunque sea con —)
+    save_state(st)
+    render_dashboard(st)
+
+    # Si no pude leer 1D ni 7D, avisar 1 vez y cortar
+    if r1 is None and r7 is None:
+        if st.get("last_band") != "ERR":
             for u in users:
-                send_message(str(u["chat_id"]), f"⚠️ No pude leer tasas de caución ({SOURCE_NAME}). Reintento automático.")
-            st["last_err"] = True
-            st["updated_at"] = now_str()
+                send(u["chat_id"], "⚠️ No pude leer tasas de caución (1D/7D). Revisar fuente o selector.")
+            st["last_band"] = "ERR"
             save_state(st)
+            render_dashboard(st)
         return
 
-    st["last_err"] = False
+    # Band por 1D (si no hay 1D, se considera MID pero igual puede haber oportunidad 7D)
+    band = band_for(r1)
+    prev_band = st.get("last_band", "")
 
-    # Build "global" bands for dashboard (using defaults)
-    dash_bands: Dict[int, str] = {}
-    for t in tenors_all:
-        r = rates[t]
-        if r is None:
-            dash_bands[t] = "N/D"
+    # Alertas por cambio de banda (para no spamear)
+    if band != prev_band and r1 is not None:
+        if band == "ROCKET":
+            msg = f"🚀 CAUCIÓN 1D (ROCKET)\nTasa: {pct(r1)}"
+        elif band == "GREEN":
+            msg = f"🟢 CAUCIÓN 1D (BUENA)\nTasa: {pct(r1)}"
+        elif band == "RED":
+            msg = f"🔴 CAUCIÓN 1D (BAJA)\nTasa: {pct(r1)}\n👉 Evaluar alternativas"
         else:
-            dash_bands[t] = band_for_rate(r, DEF_THRESH_RED, DEF_THRESH_GREEN, DEF_THRESH_ROCKET)
+            msg = f"ℹ️ CAUCIÓN 1D (NEUTRA)\nTasa: {pct(r1)}"
 
-    # Alerts per user
-    now = datetime.now(TZ)
+        if MODE == "demo":
+            msg += "\n\n🧪 MODO DEMO: mensajes de prueba."
+
+        for u in users:
+            send(u["chat_id"], msg)
+
+        st["last_band"] = band
+
+    # Oportunidad 7D (si aplica) – evita spam por texto repetido
+    opp = opportunity_text(rates)
+    if opp and opp != st.get("last_opportunity", ""):
+        detail = []
+        if r1 is not None:
+            detail.append(f"1D: {pct(r1)}")
+        if r7 is not None:
+            detail.append(f"7D: {pct(r7)}")
+        extra = "\n".join(detail)
+
+        msg = f"{opp}\n{extra}"
+        if MODE == "demo":
+            msg += "\n\n🧪 MODO DEMO: mensajes de prueba."
+
+        for u in users:
+            send(u["chat_id"], msg)
+
+        st["last_opportunity"] = opp
+
+    # Resumen diario (usa 1D si existe, si no 7D)
     today = now.strftime("%Y-%m-%d")
+    if now.hour == DAILY_HOUR and st.get("last_daily") != today:
+        for u in users:
+            cap = float(u.get("capital", CAPITAL_BASE))
+            base_rate = r1 if r1 is not None else (r7 if r7 is not None else 0.0)
+            daily_income = cap * (base_rate / 100.0) / DAYS_IN_YEAR
 
-    for u in users:
-        chat_id = str(u["chat_id"])
-        name = u["name"]
-
-        red = float(u["thresh_red"])
-        green = float(u["thresh_green"])
-        rocket = float(u["thresh_rocket"])
-        daily_hour = int(u["daily_hour"])
-
-        st["last_band"].setdefault(chat_id, {})
-        st["last_daily"].setdefault(chat_id, "")
-
-        # 1) band transitions
-        for tenor in u["tenors"]:
-            rate = rates.get(tenor)
-            if rate is None:
-                continue
-
-            new_band = band_for_rate(rate, red, green, rocket)
-            prev_band = st["last_band"][chat_id].get(str(tenor), "MID")
-
-            if should_send_transition(prev_band, new_band):
-                if new_band == "ROCKET":
-                    extra = "\n🔥 Banda: 🚀 ROCKET (tasa excepcional)"
-                elif new_band == "GREEN":
-                    extra = "\n✅ Banda: 🟢 GREEN (oportunidad)"
-                else:
-                    extra = "\n⚠️ Banda: 🔴 RED (baja)"
-
-                msg = build_alert_text(u, tenor, rate) + extra
-                send_message(chat_id, msg)
-
-            st["last_band"][chat_id][str(tenor)] = new_band
-
-        # 2) daily summary
-        if now.hour == daily_hour and st["last_daily"][chat_id] != today:
-            lines = []
-            for tenor in u["tenors"]:
-                rate = rates.get(tenor)
-                if rate is None:
-                    lines.append(f"• {tenor}D: N/D")
-                    continue
-                b = band_for_rate(rate, red, green, rocket)
-                emoji = "🚀" if b == "ROCKET" else ("🟢" if b == "GREEN" else ("🔴" if b == "RED" else "⚪"))
-                lines.append(f"• {tenor}D: {pct(rate)} {emoji} {b}")
-
-            prefix = "🧪 DEMO | " if MODE == "demo" else ""
             msg = (
-                f"{prefix}📊 {name} | Resumen diario ({SOURCE_NAME})\n"
-                + "\n".join(lines)
-                + f"\n🕒 {now_str()}"
+                f"📊 Resumen diario — Caución\n"
+                f"1D: {('—' if r1 is None else pct(r1))} | 7D: {('—' if r7 is None else pct(r7))}\n"
+                f"Capital: {money(cap)}\n"
+                f"Estimación ingreso/día (aprox): {money(daily_income)}"
             )
-            send_message(chat_id, msg)
-            st["last_daily"][chat_id] = today
+            if MODE == "demo":
+                msg += "\n\n🧪 MODO DEMO: mensajes de prueba."
+            send(u["chat_id"], msg)
 
-    # Save last known rates
-    st["last_rates"] = {str(k): (None if v is None else float(v)) for k, v in rates.items()}
-    st["updated_at"] = now_str()
+        st["last_daily"] = today
+
     save_state(st)
-
-    # Update dashboard
-    update_dashboard(rates, dash_bands)
-
+    render_dashboard(st)
 
 if __name__ == "__main__":
     main()
