@@ -1,6 +1,6 @@
 import os, re, json, csv, requests, sys
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple
@@ -41,6 +41,7 @@ def env_int(name: str, default: int) -> int:
 # Config
 # =========================
 TZ = ZoneInfo("America/Argentina/Cordoba")
+DAYS_IN_YEAR = 365
 
 DEF_SOURCE_NAME = "Bull Market Brokers"
 DEF_BYMA_HTML_URL = "https://www.bullmarketbrokers.com/Cotizaciones/cauciones"
@@ -50,11 +51,6 @@ class Config:
     mode: str
     source_name: str
     byma_html_url: str
-
-    # thresholds legacy (quedan por compatibilidad; ya no mandan la decisión)
-    thresh_red: float
-    thresh_green: float
-    thresh_rocket: float
 
     daily_hour: int
     capital_base: float
@@ -69,16 +65,16 @@ class Config:
     # percentiles/bandas
     pctl_window_days: int
     min_points_for_pctls: int
-    notify_on_band_change_only: int  # 1/0 (bool)
+    notify_on_band_change_only: int  # 1/0
+
+    # alertas contextuales
+    spread_alert_min: float  # pts TNA (7D - 1D) mínimo para avisar
+    spread_alert_once_per_day: int  # 1/0
 
 CFG = Config(
     mode=env_str("MODE", "demo"),
     source_name=env_str("SOURCE_NAME", DEF_SOURCE_NAME),
     byma_html_url=env_str("BYMA_HTML_URL", DEF_BYMA_HTML_URL),
-
-    thresh_red=env_float("THRESH_RED", 35.5),
-    thresh_green=env_float("THRESH_GREEN", 38.0),
-    thresh_rocket=env_float("THRESH_ROCKET", 40.0),
 
     daily_hour=env_int("DAILY_HOUR", 10),
     capital_base=env_float("CAPITAL_BASE", 38901078.37),
@@ -93,6 +89,9 @@ CFG = Config(
     pctl_window_days=env_int("PCTL_WINDOW_DAYS", 60),
     min_points_for_pctls=env_int("MIN_POINTS_FOR_PCTLS", 20),
     notify_on_band_change_only=env_int("NOTIFY_ON_BAND_CHANGE_ONLY", 1),
+
+    spread_alert_min=env_float("SPREAD_ALERT_MIN", 0.50),  # 0.50 pts por default
+    spread_alert_once_per_day=env_int("SPREAD_ALERT_ONCE_PER_DAY", 1),
 )
 
 # =========================
@@ -145,6 +144,10 @@ def send_safe(chat_id: str, msg: str) -> None:
 def pct(v: float) -> str:
     return f"{v:.2f}%"
 
+def money_ars(v: float) -> str:
+    # sin centavos, estilo AR
+    return "$" + f"{v:,.0f}".replace(",", ".")
+
 def now_tz() -> datetime:
     return datetime.now(TZ)
 
@@ -156,6 +159,13 @@ def safe_float(x) -> Optional[float]:
     except Exception:
         return None
 
+def daily_gross_gain(capital: float, tna: float) -> float:
+    """
+    Ganancia bruta estimada por 1 día (aprox simple): capital * (TNA/100) / 365
+    Nota: caución real puede devengar por día hábil/convención; esto es aproximación consistente.
+    """
+    return capital * (tna / 100.0) / DAYS_IN_YEAR
+
 # =========================
 # Scraping
 # =========================
@@ -165,10 +175,6 @@ def fetch_html(url: str) -> str:
     return r.text
 
 def parse_rates_from_html(html: str) -> Dict[str, Optional[float]]:
-    """
-    Extrae tasas 1D y 7D de la página HTML.
-    Si algún plazo no aparece, devuelve None.
-    """
     def find(days: str) -> Optional[float]:
         m = re.search(rf"{days}\s*D.*?(\d+[.,]\d+)\s*%", html, re.I | re.S)
         return float(m.group(1).replace(",", ".")) if m else None
@@ -207,10 +213,6 @@ def ensure_csv_exists() -> None:
             w.writerow(CSV_HEADER)
 
 def read_last_row_for_term(term: str, max_lines: int = 400) -> Optional[dict]:
-    """
-    Lee hacia atrás escaneando últimas N líneas del CSV.
-    Suficiente para repos chicos y evita cargar todo el archivo.
-    """
     if not RATES_CSV.exists():
         return None
 
@@ -231,9 +233,6 @@ def read_last_row_for_term(term: str, max_lines: int = 400) -> Optional[dict]:
     return None
 
 def should_append(term: str, tna: float, ts: datetime) -> Tuple[bool, str]:
-    """
-    Dedupe por: mismo term + misma tasa dentro de ventana DEDUP_MINUTES.
-    """
     last = read_last_row_for_term(term)
     if not last:
         return True, "no_last"
@@ -276,9 +275,6 @@ def append_rates_csv(ts: datetime, source: str, rates: Dict[str, Optional[float]
 # Percentiles y Bandas
 # =========================
 def load_historical_rates(term: str, days: int) -> List[float]:
-    """
-    Devuelve lista de TNAs para un plazo dado, filtrado por ventana de días.
-    """
     if not RATES_CSV.exists():
         return []
 
@@ -295,8 +291,7 @@ def load_historical_rates(term: str, days: int) -> List[float]:
                     ts = datetime.fromisoformat(row["timestamp"])
                     if ts < cutoff:
                         continue
-                    tna = float(row["tna"])
-                    values.append(tna)
+                    values.append(float(row["tna"]))
                 except Exception:
                     continue
     except Exception as e:
@@ -306,14 +301,8 @@ def load_historical_rates(term: str, days: int) -> List[float]:
     return values
 
 def compute_percentiles(values: List[float]) -> dict:
-    """
-    Calcula P40 / P60 / P75 usando quantiles.
-    Requiere mínimo CFG.min_points_for_pctls puntos.
-    """
     if len(values) < CFG.min_points_for_pctls:
         return {}
-
-    # quantiles n=100 devuelve lista de 99 cortes (1..99)
     qs = quantiles(values, n=100, method="inclusive")
     return {"p40": qs[39], "p60": qs[59], "p75": qs[74], "n": len(values)}
 
@@ -372,16 +361,55 @@ def render_dashboard(state: dict) -> None:
     <li><b>Banda actual:</b> {band}</li>
   </ul>
 
+  <h2>Alertas</h2>
+  <ul>
+    <li><b>Spread alerta (7D-1D):</b> {state.get("spread_alert_min","—")} pts</li>
+    <li><b>Último spread alert date:</b> {state.get("last_spread_alert_date","—")}</li>
+    <li><b>Último resumen diario date:</b> {state.get("last_daily_summary_date","—")}</li>
+  </ul>
+
   <p style="opacity:.75;">CSV: {state.get("csv_path","data/rates.csv")}</p>
 </body>
 </html>
 """, encoding="utf-8")
 
 # =========================
-# Alerts
+# Alertas PRO
 # =========================
-def send_business_alerts(users: List[dict], r1: Optional[float], r7: Optional[float], state: dict) -> None:
-    # Si no hay datos, avisar una vez (simple)
+def maybe_send_spread_alert(users: List[dict], r1: Optional[float], r7: Optional[float], state: dict, ts: datetime) -> None:
+    """
+    Alerta cuando 7D paga más que 1D por al menos SPREAD_ALERT_MIN (en puntos de TNA).
+    Opcional: solo una vez por día.
+    """
+    if r1 is None or r7 is None:
+        return
+
+    spread = r7 - r1
+    if spread < CFG.spread_alert_min:
+        return
+
+    today = ts.date().isoformat()
+    if CFG.spread_alert_once_per_day:
+        if state.get("last_spread_alert_date") == today:
+            return
+
+    msg = (
+        f"🔄 Oportunidad de plazo\n"
+        f"7D ({pct(r7)}) > 1D ({pct(r1)})\n"
+        f"Spread: +{spread:.2f} pts\n"
+        f"Tip: si tu prioridad es tasa (y podés inmovilizar 7 días), evaluá rollear a 7D."
+    )
+    for u in users:
+        send_safe(u["chat_id"], msg)
+
+    state["last_spread_alert_date"] = today
+
+def send_band_alerts(users: List[dict], r1: Optional[float], r7: Optional[float], state: dict) -> None:
+    """
+    Alertas por banda dinámica de 1D con anti-spam:
+    - por defecto: solo si cambia de banda
+    - siempre alerta extremos: EXCELENTE / BAJA
+    """
     if r1 is None and r7 is None:
         for u in users:
             send_safe(u["chat_id"], "⚠️ No pude leer tasas de caución.")
@@ -393,11 +421,9 @@ def send_business_alerts(users: List[dict], r1: Optional[float], r7: Optional[fl
     band = state.get("band_1d", "SIN_HISTORICO")
     p = state.get("percentiles_1d", {}) or {}
 
-    prev_band = state.get("prev_band_1d")  # lo guardamos en state
+    prev_band = state.get("prev_band_1d")
     band_changed = (prev_band is not None and prev_band != band)
 
-    # Política de spam: por defecto, solo si cambió de banda,
-    # pero siempre notificar extremos (EXCELENTE/BAJA)
     notify = True
     if CFG.notify_on_band_change_only:
         notify = band_changed or band in ("EXCELENTE", "BAJA")
@@ -405,7 +431,6 @@ def send_business_alerts(users: List[dict], r1: Optional[float], r7: Optional[fl
     if not notify:
         return
 
-    # Mensajes
     if band == "SIN_HISTORICO":
         for u in users:
             send_safe(
@@ -419,7 +444,6 @@ def send_business_alerts(users: List[dict], r1: Optional[float], r7: Optional[fl
     p60 = safe_float(p.get("p60"))
     p75 = safe_float(p.get("p75"))
 
-    # Texto base
     base = (
         f"📌 Caución 1D: {pct(r1)}\n"
         f"Banda: {band}\n"
@@ -438,6 +462,42 @@ def send_business_alerts(users: List[dict], r1: Optional[float], r7: Optional[fl
 
     for u in users:
         send_safe(u["chat_id"], f"{emoji} {base}")
+
+def maybe_send_daily_summary(users: List[dict], r1: Optional[float], state: dict, ts: datetime) -> None:
+    """
+    Resumen diario (1 vez por día) a la hora DAILY_HOUR local.
+    Incluye estimación bruta en $ por usuario (sin comisiones inventadas).
+    """
+    if r1 is None:
+        return
+
+    if ts.hour != CFG.daily_hour:
+        return
+
+    today = ts.date().isoformat()
+    if state.get("last_daily_summary_date") == today:
+        return
+
+    band = state.get("band_1d", "—")
+    p = state.get("percentiles_1d", {}) or {}
+    n = p.get("n", "—")
+
+    for u in users:
+        cap = float(u.get("capital", CFG.capital_base))
+        gain_day = daily_gross_gain(cap, r1)
+        gain_30 = gain_day * 30  # aproximación lineal
+
+        msg = (
+            f"🧾 Resumen diario (bruto)\n"
+            f"1D: {pct(r1)} | Banda: {band}\n"
+            f"Capital: {money_ars(cap)}\n"
+            f"Estimado 1 día: {money_ars(gain_day)}\n"
+            f"Estimado 30 días: {money_ars(gain_30)}\n"
+            f"(Ventana percentiles: {CFG.pctl_window_days}D | n={n})"
+        )
+        send_safe(u["chat_id"], msg)
+
+    state["last_daily_summary_date"] = today
 
 # =========================
 # MAIN
@@ -459,10 +519,9 @@ def main() -> None:
     pctls_1d = compute_percentiles(hist_1d)
     band_1d = classify_band(r1, pctls_1d) if r1 is not None else "N/A"
 
-    # Guardar banda previa para detectar cambios
     prev_band_1d = state.get("band_1d")
 
-    # 4) Update state
+    # 4) Update state (antes de alertas)
     state.update({
         "last_rate_1d": r1,
         "last_rate_7d": r7,
@@ -476,14 +535,18 @@ def main() -> None:
         "percentiles_1d": pctls_1d,
         "band_1d": band_1d,
         "prev_band_1d": prev_band_1d,
+
+        "spread_alert_min": CFG.spread_alert_min,
     })
+
+    # 5) Alertas (mutan state con last_*_date)
+    maybe_send_spread_alert(users, r1, r7, state, ts)
+    send_band_alerts(users, r1, r7, state)
+    maybe_send_daily_summary(users, r1, state, ts)
+
+    # 6) Persist state + dashboard
     save_state(state)
-
-    # 5) Dashboard
     render_dashboard(state)
-
-    # 6) Alertas
-    send_business_alerts(users, r1, r7, state)
 
     print("✅ Bot ejecutado correctamente")
     if csv_result["written"]:
