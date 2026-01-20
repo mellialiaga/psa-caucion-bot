@@ -1,145 +1,47 @@
-# 📈 PSA Caución Bot  
-Alertas automáticas de cauciones en pesos (BYMA) para detectar oportunidades y generar ingresos periódicos sin estar pendiente del mercado.
+# 🧾 PSA Caución Bot
+Alertas inteligentes para operar cauciones en pesos sin mirar la pantalla.
 
 👉 Acceso, demo y pricing por WhatsApp  
 📲 https://wa.me/5493517623486?text=Hola%20Pablo,%20vi%20el%20PSA%20Caución%20Bot%20y%20me%20interesa%20recibir%20información%20sobre%20el%20acceso%20al%20modo%20PRO,%20pricing%20y%20demo.%20Gracias.
 
 ---
 
-## 🚀 ¿Qué es PSA Caución Bot?
-
-PSA Caución Bot es un **bot de Telegram** que monitorea automáticamente las **tasas de caución en pesos (BYMA)** y te avisa **solo cuando pasa algo que realmente vale la pena**.
-
-Está pensado para personas que usan cauciones como:
-- fuente de ingresos
-- complemento de sueldo
-- estrategia de preservación de capital
-- alternativa a estar todo el día mirando el mercado
-
-> ⚠️ El bot **no opera por vos**.  
-> Te avisa. Vos decidís.
+**PSA Caución Bot** es un bot de Telegram que monitorea automáticamente tasas de caución (1D y 7D) y te avisa **solo cuando pasa algo que vale la pena**. Incluye un **dashboard simple** para ver la última tasa detectada y estado general.
 
 ---
 
-## 🧠 ¿Qué hace exactamente?
+## ✅ Qué hace
 
-- 🔔 Alertas automáticas por Telegram
-- 📊 Monitoreo de cauciones en **1D, 7D, 14D y 30D**
-- 🟢 Detección de **oportunidades reales** cuando la tasa supera niveles clave
-- 🟣 Identificación de **premios por lockear plazos más largos**
-- 🔥 Alerta de **súper oportunidades** (tasas excepcionalmente altas)
-- 💰 Cálculo de **ingreso diario y mensual estimado**
-- 🧮 En caución 1D muestra **neto real** (costos + IVA incluidos, calibrado con boleta real)
-- 📅 Asistencia para **estrategia de cobro de sueldo** (ej: 4º día hábil)
-- 🧪 Modo **DEMO / PRO**
-- 👥 Soporte **multi-usuario**
-- 🌐 Dashboard web con tasas actualizadas
+- 🔔 Alertas por cambios de nivel (baja / buena / rocket)
+- 📌 Detecta oportunidades cuando **7D paga mejor que 1D**
+- 📊 Resumen diario con estimación de ingreso (según capital)
+- 👥 Multi-usuario (ideal si lo ofrecés como servicio)
+- 🌐 Dashboard web (GitHub Pages)
 
 ---
 
-## 🎯 ¿Para quién es?
+## ⚙️ Requisitos
 
-- Inversores en pesos
-- Personas con capital líquido ($10M – $100M+)
-- Quienes buscan:
-  - generar ingresos periódicos
-  - aprovechar picos de tasa
-  - evitar malas decisiones por apuro
-- Usuarios que valoran **automatización + criterio**
+- GitHub repo (este)
+- GitHub Actions habilitado
+- Bot de Telegram (token)
+- Chat ID (o lista multiusuario)
 
 ---
 
-## 🧪 Modos disponibles
+## 🚀 Instalación rápida (GitHub Actions)
 
-### 🔹 Modo DEMO
-Ideal para conocer el sistema.
+### 1) Crear Secrets
+Repo → **Settings** → **Secrets and variables** → **Actions** → **Secrets**
 
-- Alertas limitadas
-- Solo caución 1D
-- Mensajes con watermark
-- Sin cálculos avanzados
+Crear:
+- `TG_BOT_TOKEN`
+- `TG_CHAT_ID` *(si es single user)*  
+- `USERS_JSON` *(si es multiusuario, opcional)*
 
----
-
-### 🔹 Modo PRO
-Uso productivo real.
-
-- Alertas completas (multi-plazo)
-- Detección de oportunidades y premios
-- Cálculo neto real en 1D
-- Asistencia para retiro de sueldo
-- Dashboard activo
-- Uso diario sin limitaciones
-
----
-
-## 📊 Dashboard
-
-El bot genera automáticamente un **dashboard web** accesible desde el navegador con:
-
-- tasas actuales por plazo
-- mejor oportunidad del momento
-- última actualización
-- estado general del mercado
-
-Ideal para tener una **vista rápida sin abrir Telegram**.
-
----
-
-## 💵 Pricing
-
-### 💡 Acceso al PSA Caución Bot – Modo PRO
-
-💰 **ARS $12.000 / mes**
-
-Incluye:
-- alertas automáticas multi-plazo
-- detección de oportunidades reales
-- cálculo de ingreso diario y mensual
-- estimación neta real en caución 1D
-- asistencia para estrategia de retiro de sueldo
-- acceso al dashboard web
-- soporte inicial
-
-📲 Consultas y acceso por WhatsApp:  
-https://wa.me/5493517623486
-
-> Con una sola buena decisión, el bot se paga solo.
-
----
-
-## ⚙️ Tecnología (resumen)
-
-- Python
-- GitHub Actions (ejecución automática cada 15 minutos)
-- Telegram Bot API
-- GitHub Pages (dashboard)
-- Sin servidor propio
-- Sin base de datos externa
-
----
-
-## ⚠️ Disclaimer
-
-Este bot:
-- no garantiza rentabilidad
-- no ejecuta operaciones
-- no brinda asesoramiento financiero personalizado
-
-Es una **herramienta de monitoreo y apoyo a la toma de decisiones**.  
-Cada usuario es responsable de sus decisiones de inversión.
-
----
-
-## 👤 Autor
-
-Desarrollado por **Pablo Aliaga**  
-Automatización aplicada al mercado de capitales argentino.
-
----
-
-### 🧩 Roadmap (posibles mejoras)
-- comandos interactivos
-- panel privado por usuario
-- alertas adicionales
-- versión white-label
+Ejemplo `USERS_JSON`:
+```json
+[
+  {"name":"Pablo","chat_id":"123456789","capital":38901078.37},
+  {"name":"Javier","chat_id":"987654321","capital":2000000}
+]
