@@ -3,12 +3,14 @@ name: PSA Caucion Bot
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/15 * * * *"   # cada 15 min
-  push:
-    branches: [ "main" ]
+    - cron: "*/15 * * * *"  # cada 15 min
 
 permissions:
   contents: write
+
+concurrency:
+  group: psa-caucion-bot
+  cancel-in-progress: true
 
 jobs:
   run-bot:
@@ -16,6 +18,9 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -47,6 +52,13 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
           git add docs/index.html .state/state.json || true
-          git diff --cached --quiet || git commit -m "Update dashboard + state"
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Update dashboard + state"
           git push
