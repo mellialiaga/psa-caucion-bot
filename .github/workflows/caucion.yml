@@ -3,18 +3,15 @@ name: PSA Caucion Bot
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/15 * * * *"  # cada 15 min
+    - cron: "*/15 * * * *"   # cada 15 minutos
 
 permissions:
-  contents: write
-
-concurrency:
-  group: psa-caucion-bot
-  cancel-in-progress: true
+  contents: write   # 🔴 CLAVE para poder pushear dashboard/state
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -28,30 +25,23 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
       - name: Run PSA Caucion Bot
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           USERS_JSON: ${{ secrets.USERS_JSON }}
-
-          MODE: ${{ vars.MODE }}
-          SOURCE_NAME: ${{ vars.SOURCE_NAME }}
-          BYMA_HTML_URL: ${{ vars.BYMA_HTML_URL }}
-
-          THRESH_RED: ${{ vars.THRESH_RED }}
-          THRESH_GREEN: ${{ vars.THRESH_GREEN }}
-          THRESH_ROCKET: ${{ vars.THRESH_ROCKET }}
-
-          DAILY_HOUR: ${{ vars.DAILY_HOUR }}
-          CAPITAL_BASE: ${{ vars.CAPITAL_BASE }}
-        run: python caucion_alerta.py
+          MODE: demo
+        run: |
+          python caucion_alerta.py
 
       - name: Commit dashboard + state (if changed)
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "psa-caucion-bot"
+          git config user.email "actions@github.com"
 
           git add docs/index.html .state/state.json || true
 
@@ -60,5 +50,5 @@ jobs:
             exit 0
           fi
 
-          git commit -m "Update dashboard + state"
+          git commit -m "chore: update dashboard and state"
           git push
