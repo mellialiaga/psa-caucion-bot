@@ -3,7 +3,9 @@ name: PSA Caucion Bot
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/15 * * * *"   # cada 15 min (ajustá si querés)
+    - cron: "*/15 * * * *"   # cada 15 min
+  push:
+    branches: [ "main" ]
 
 permissions:
   contents: write
@@ -11,12 +13,9 @@ permissions:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-        with:
-          persist-credentials: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -32,7 +31,6 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           USERS_JSON: ${{ secrets.USERS_JSON }}
 
-          # Variables opcionales (si no están, usa defaults)
           MODE: ${{ vars.MODE }}
           SOURCE_NAME: ${{ vars.SOURCE_NAME }}
           BYMA_HTML_URL: ${{ vars.BYMA_HTML_URL }}
@@ -49,13 +47,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          git add .state docs || true
-
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-            exit 0
-          fi
-
-          git commit -m "Update dashboard/state [skip ci]"
+          git add docs/index.html .state/state.json || true
+          git diff --cached --quiet || git commit -m "Update dashboard + state"
           git push
