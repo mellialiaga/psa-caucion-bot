@@ -27,8 +27,8 @@ jobs:
 
       - name: Commit dashboard + state
         run: |
-          git config user.name "psa-bot"
-          git config user.email "psa-bot@users.noreply.github.com"
-          git add docs .state || true
-          git commit -m "Update dashboard" || true
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs .state data || true
+          git commit -m "update dashboard/state/data" || true
           git push || true
