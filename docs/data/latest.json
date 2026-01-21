@@ -1,22 +1,9 @@
 {
-  "timestamp": "2026-01-19T14:20:17.479802-03:00",
-  "source": "https://www.portfoliopersonal.com/Cotizaciones/Cauciones",
-  "rates": {
-    "1": 33.0,
-    "7": 34.2,
-    "14": 34.0,
-    "30": 33.0
-  },
-  "best": {
-    "tenor_days": 7,
-    "rate": 34.2
-  },
-  "tenors": [
-    1,
-    7,
-    14,
-    30
-  ],
-  "mode": "PRO",
-  "users_count": 1
+  "generated_at": "2026-01-21T03:49:48.173718+00:00",
+  "source": "dummy",
+  "term": "1D",
+  "tna": 30.0,
+  "tea": null,
+  "quality": "placeholder",
+  "note": "Primer dato generado correctamente"
 }
