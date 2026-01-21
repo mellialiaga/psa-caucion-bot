@@ -1,12 +1,101 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta charset="UTF-8" />
   <title>PSA Caución Bot — Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #0f1115;
+      color: #e6e6e6;
+      margin: 0;
+      padding: 40px;
+    }
+
+    h1 {
+      margin-top: 0;
+    }
+
+    .card {
+      background: #1a1d23;
+      border-radius: 8px;
+      padding: 20px;
+      max-width: 420px;
+      box-shadow: 0 10px 25px rgba(0,0,0,.3);
+    }
+
+    .label {
+      color: #9aa4b2;
+      font-size: 14px;
+    }
+
+    .value {
+      font-size: 28px;
+      font-weight: bold;
+      margin-top: 4px;
+    }
+
+    .muted {
+      color: #8a8f98;
+      font-size: 13px;
+      margin-top: 8px;
+    }
+
+    .error {
+      color: #ff6b6b;
+      font-weight: bold;
+    }
+  </style>
 </head>
-<body style="font-family:system-ui,Segoe UI,Roboto,Arial;padding:24px;">
+
+<body>
   <h1>PSA Caución Bot — Dashboard</h1>
-  <p>Esperando primera ejecución…</p>
+
+  <div id="app">
+    <p>Cargando datos…</p>
+  </div>
+
+  <script>
+    const app = document.getElementById("app");
+
+    function renderError(msg) {
+      app.innerHTML = `<p class="error">❌ ${msg}</p>`;
+    }
+
+    function renderData(data) {
+      app.innerHTML = `
+        <div class="card">
+          <div class="label">Caución</div>
+          <div class="value">${data.term}</div>
+
+          <div class="label" style="margin-top:12px;">TNA</div>
+          <div class="value">${data.tna.toFixed(2)}%</div>
+
+          <div class="muted">
+            Fuente: ${data.source}<br>
+            Calidad: ${data.quality}<br>
+            Actualizado: ${new Date(data.generated_at).toLocaleString()}
+          </div>
+        </div>
+      `;
+    }
+
+    // 🚨 CLAVE: ruta RELATIVA (funciona en GitHub Pages con subpath)
+    fetch("data/latest.json")
+      .then(res => {
+        if (!res.ok) throw new Error("No se pudo cargar latest.json");
+        return res.json();
+      })
+      .then(data => {
+        console.log("DATA OK:", data);
+        renderData(data);
+      })
+      .catch(err => {
+        console.error(err);
+        renderError("No se pudieron cargar los datos");
+      });
+  </script>
 </body>
 </html>
