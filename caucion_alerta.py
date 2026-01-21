@@ -366,6 +366,7 @@ def render_dashboard(state: dict) -> None:
     <li><b>Spread alerta (7D-1D):</b> {state.get("spread_alert_min","—")} pts</li>
     <li><b>Último spread alert date:</b> {state.get("last_spread_alert_date","—")}</li>
     <li><b>Último resumen diario date:</b> {state.get("last_daily_summary_date","—")}</li>
+    <li><b>Último heartbeat date:</b> {state.get("last_heartbeat_date","—")}</li>
   </ul>
 
   <p style="opacity:.75;">CSV: {state.get("csv_path","data/rates.csv")}</p>
@@ -499,6 +500,36 @@ def maybe_send_daily_summary(users: List[dict], r1: Optional[float], state: dict
 
     state["last_daily_summary_date"] = today
 
+def maybe_send_heartbeat(users: List[dict], r1: Optional[float], state: dict, ts: datetime, alert_sent: bool) -> None:
+    """
+    Heartbeat diario (1 vez por día) SOLO si no hubo alertas de negocio.
+    Sirve para confirmar que el bot está vivo aunque no haya señal.
+    """
+    if alert_sent:
+        return
+
+    if r1 is None:
+        return
+
+    today = ts.date().isoformat()
+    if state.get("last_heartbeat_date") == today:
+        return
+
+    band = state.get("band_1d", "—")
+    source = CFG.source_name
+
+    msg = (
+        "🤖 PSA Caución Bot — OK\n"
+        f"Fuente: {source}\n"
+        f"1D: {pct(r1)} | Banda: {band}\n"
+        "Sin señal hoy."
+    )
+
+    for u in users:
+        send_safe(u["chat_id"], msg)
+
+    state["last_heartbeat_date"] = today
+
 # =========================
 # MAIN
 # =========================
@@ -540,9 +571,24 @@ def main() -> None:
     })
 
     # 5) Alertas (mutan state con last_*_date)
+    alert_sent = False
+
+    before_spread = state.get("last_spread_alert_date")
     maybe_send_spread_alert(users, r1, r7, state, ts)
+    if state.get("last_spread_alert_date") != before_spread:
+        alert_sent = True
+
+    # Band alerts: cuentan como "negocio" solo si son de señal fuerte (EXCELENTE/BUENA/BAJA) o cambio a extremos
+    before_band = state.get("prev_band_1d")
     send_band_alerts(users, r1, r7, state)
+    if before_band != state.get("band_1d") and state.get("band_1d") in ("EXCELENTE", "BUENA", "BAJA"):
+        alert_sent = True
+
+    # Resumen diario: informativo, no lo contamos como alerta de negocio
     maybe_send_daily_summary(users, r1, state, ts)
+
+    # Heartbeat: solo si NO hubo alertas de negocio
+    maybe_send_heartbeat(users, r1, state, ts, alert_sent)
 
     # 6) Persist state + dashboard
     save_state(state)
