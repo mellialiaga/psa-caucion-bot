@@ -2,99 +2,456 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <title>PSA Caución Bot — Dashboard</title>
+  <title>PSA Caución Bot — Dashboard PRO</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
+  <!-- Plotly CDN (estático, GitHub Pages friendly) -->
+  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+
   <style>
-    body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
-      background: #0f1115;
-      color: #e6e6e6;
-      margin: 0;
-      padding: 40px;
+    :root{
+      --bg: #0b1220;
+      --panel: rgba(255,255,255,.06);
+      --panel2: rgba(255,255,255,.08);
+      --text: #e8eefc;
+      --muted: rgba(232,238,252,.72);
+      --muted2: rgba(232,238,252,.55);
+      --line: rgba(232,238,252,.12);
+      --green: #3ddc97;
+      --yellow: #ffd166;
+      --orange: #ff9f1c;
+      --red: #ff5c7a;
+      --blue: #6ea8fe;
+      --purple: #b197fc;
+    }
+    *{ box-sizing:border-box; }
+    body{
+      margin:0; padding:28px;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      background: radial-gradient(1200px 600px at 20% 0%, rgba(110,168,254,.18), transparent 60%),
+                  radial-gradient(1000px 600px at 90% 10%, rgba(177,151,252,.14), transparent 55%),
+                  var(--bg);
+      color: var(--text);
+    }
+    .topbar{
+      display:flex; gap:14px; align-items:flex-end; justify-content:space-between;
+      margin-bottom:18px;
+    }
+    .title h1{ margin:0; font-size:22px; letter-spacing:.2px; }
+    .title .sub{ color: var(--muted); font-size:13px; margin-top:4px; }
+    .controls{
+      display:flex; gap:10px; flex-wrap:wrap; align-items:center;
+    }
+    .pill{
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px;
+      display:flex; gap:10px; align-items:center;
+      box-shadow: 0 18px 45px rgba(0,0,0,.25);
+    }
+    select{
+      background: transparent;
+      color: var(--text);
+      border: 0;
+      outline:none;
+      font-size:13px;
+    }
+    .grid{
+      display:grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap:14px;
+    }
+    .card{
+      background: linear-gradient(180deg, var(--panel), rgba(255,255,255,.04));
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px 14px;
+      box-shadow: 0 18px 45px rgba(0,0,0,.25);
+      overflow:hidden;
+    }
+    .kpi{
+      display:flex; flex-direction:column; gap:6px;
+      min-height:84px;
+    }
+    .kpi .label{ color: var(--muted); font-size:12px; }
+    .kpi .value{ font-size:22px; font-weight:700; letter-spacing:.2px; }
+    .kpi .hint{ color: var(--muted2); font-size:12px; }
+    .badge{
+      display:inline-flex; align-items:center; gap:8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.06);
+      border: 1px solid var(--line);
+      font-size:12px;
+      color: var(--muted);
+    }
+    .dot{ width:10px; height:10px; border-radius:50%; background: var(--muted); }
+    .dot.green{ background: var(--green); }
+    .dot.yellow{ background: var(--yellow); }
+    .dot.orange{ background: var(--orange); }
+    .dot.red{ background: var(--red); }
+    .chart{
+      height: 340px;
+    }
+    .chartTall{
+      height: 380px;
+    }
+    .span-3{ grid-column: span 3; }
+    .span-4{ grid-column: span 4; }
+    .span-5{ grid-column: span 5; }
+    .span-6{ grid-column: span 6; }
+    .span-7{ grid-column: span 7; }
+    .span-12{ grid-column: span 12; }
+
+    .footer{
+      margin-top: 14px;
+      color: var(--muted2);
+      font-size: 12px;
+      display:flex;
+      justify-content:space-between;
+      gap:10px;
+      flex-wrap:wrap;
+    }
+    a{ color: var(--blue); text-decoration:none; }
+    .error{
+      background: rgba(255,92,122,.12);
+      border: 1px solid rgba(255,92,122,.25);
+      color: #ffd5dc;
+      padding: 12px 14px;
+      border-radius: 14px;
     }
 
-    h1 {
-      margin-top: 0;
-    }
-
-    .card {
-      background: #1a1d23;
-      border-radius: 8px;
-      padding: 20px;
-      max-width: 420px;
-      box-shadow: 0 10px 25px rgba(0,0,0,.3);
-    }
-
-    .label {
-      color: #9aa4b2;
-      font-size: 14px;
-    }
-
-    .value {
-      font-size: 28px;
-      font-weight: bold;
-      margin-top: 4px;
-    }
-
-    .muted {
-      color: #8a8f98;
-      font-size: 13px;
-      margin-top: 8px;
-    }
-
-    .error {
-      color: #ff6b6b;
-      font-weight: bold;
+    @media (max-width: 980px){
+      body{ padding:18px; }
+      .span-3,.span-4,.span-5,.span-6,.span-7{ grid-column: span 12; }
+      .chart{ height: 320px; }
+      .chartTall{ height: 360px; }
+      .topbar{ flex-direction:column; align-items:flex-start; }
     }
   </style>
 </head>
 
 <body>
-  <h1>PSA Caución Bot — Dashboard</h1>
+  <div class="topbar">
+    <div class="title">
+      <h1>PSA Caución Bot — Dashboard PRO</h1>
+      <div class="sub" id="subtitle">Cargando…</div>
+    </div>
 
-  <div id="app">
-    <p>Cargando datos…</p>
+    <div class="controls">
+      <div class="pill">
+        <span class="badge"><span class="dot"></span>Rango</span>
+        <select id="range">
+          <option value="7">7D</option>
+          <option value="30">30D</option>
+          <option value="60">60D</option>
+          <option value="90">90D</option>
+          <option value="180" selected>180D</option>
+        </select>
+      </div>
+
+      <div class="pill">
+        <span class="badge"><span class="dot"></span>Serie</span>
+        <select id="seriesMode">
+          <option value="both" selected>1D + 7D</option>
+          <option value="1d">Solo 1D</option>
+          <option value="7d">Solo 7D</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div id="root" class="grid">
+    <div class="card span-12" id="loading">Cargando datos…</div>
   </div>
 
   <script>
-    const app = document.getElementById("app");
+    const DATA_URL = "data/dashboard.json"; // ruta relativa (GitHub Pages friendly)
 
-    function renderError(msg) {
-      app.innerHTML = `<p class="error">❌ ${msg}</p>`;
-    }
+    const fmtPct = (x) => (x === null || x === undefined || Number.isNaN(x)) ? "—" : `${Number(x).toFixed(2)}%`;
+    const fmtNum = (x) => (x === null || x === undefined || Number.isNaN(x)) ? "—" : `${Number(x).toFixed(2)}`;
+    const fmtDate = (iso) => {
+      try { return new Date(iso).toLocaleString(); } catch { return "—"; }
+    };
 
-    function renderData(data) {
-      app.innerHTML = `
-        <div class="card">
-          <div class="label">Caución</div>
-          <div class="value">${data.term}</div>
+    const bandMeta = (b) => {
+      const map = {
+        "EXCELENTE": { label: "EXCELENTE", dot: "green" },
+        "BUENA":     { label: "BUENA",     dot: "yellow" },
+        "ACEPTABLE": { label: "ACEPTABLE", dot: "orange" },
+        "BAJA":      { label: "BAJA",      dot: "red" },
+        "SIN_HISTORICO": { label: "SIN HISTÓRICO", dot: "" },
+        "N/A": { label: "N/A", dot: "" }
+      };
+      return map[b] || { label: b || "—", dot: "" };
+    };
 
-          <div class="label" style="margin-top:12px;">TNA</div>
-          <div class="value">${data.tna.toFixed(2)}%</div>
+    function buildLayoutSkeleton() {
+      const root = document.getElementById("root");
+      root.innerHTML = `
+        <div class="card span-3"><div class="kpi">
+          <div class="label">Caución 1D (TNA)</div>
+          <div class="value" id="kpi1d">—</div>
+          <div class="hint" id="kpi1dHint">—</div>
+        </div></div>
 
-          <div class="muted">
-            Fuente: ${data.source}<br>
-            Calidad: ${data.quality}<br>
-            Actualizado: ${new Date(data.generated_at).toLocaleString()}
+        <div class="card span-3"><div class="kpi">
+          <div class="label">Caución 7D (TNA)</div>
+          <div class="value" id="kpi7d">—</div>
+          <div class="hint" id="kpi7dHint">—</div>
+        </div></div>
+
+        <div class="card span-3"><div class="kpi">
+          <div class="label">Spread (7D - 1D)</div>
+          <div class="value" id="kpiSpread">—</div>
+          <div class="hint">Puntos TNA</div>
+        </div></div>
+
+        <div class="card span-3"><div class="kpi">
+          <div class="label">Banda dinámica (1D)</div>
+          <div class="value" id="kpiBand">—</div>
+          <div class="hint" id="kpiBandHint">—</div>
+        </div></div>
+
+        <div class="card span-7">
+          <div class="badge" style="margin-bottom:10px;">
+            <span class="dot" style="background: var(--blue)"></span>
+            Histórico (TNA)
+          </div>
+          <div id="chartRates" class="chart"></div>
+        </div>
+
+        <div class="card span-5">
+          <div class="badge" style="margin-bottom:10px;">
+            <span class="dot" style="background: var(--purple)"></span>
+            Spread (7D - 1D)
+          </div>
+          <div id="chartSpread" class="chart"></div>
+        </div>
+
+        <div class="card span-6">
+          <div class="badge" style="margin-bottom:10px;">
+            <span class="dot" style="background: var(--orange)"></span>
+            Distribución 1D (ventana 60D)
+          </div>
+          <div id="chartHist" class="chartTall"></div>
+        </div>
+
+        <div class="card span-6">
+          <div class="badge" style="margin-bottom:10px;">
+            <span class="dot" style="background: var(--green)"></span>
+            Eventos (cambios de banda 1D)
+          </div>
+          <div id="chartEvents" class="chartTall"></div>
+        </div>
+
+        <div class="card span-12">
+          <div class="footer">
+            <div id="footerLeft">—</div>
+            <div id="footerRight">—</div>
           </div>
         </div>
       `;
     }
 
-    // 🚨 CLAVE: ruta RELATIVA (funciona en GitHub Pages con subpath)
-    fetch("data/latest.json")
+    function filterByDays(arr, days) {
+      if (!arr || arr.length === 0) return [];
+      const cutoff = Date.now() - days * 24 * 3600 * 1000;
+      return arr.filter(p => {
+        const t = Date.parse(p.t);
+        return !Number.isNaN(t) && t >= cutoff;
+      });
+    }
+
+    function plotRates(series1d, series7d, mode) {
+      const t1 = series1d.map(x => x.t);
+      const v1 = series1d.map(x => x.v);
+      const t7 = series7d.map(x => x.t);
+      const v7 = series7d.map(x => x.v);
+
+      const traces = [];
+      if (mode === "both" || mode === "1d") {
+        traces.push({
+          x: t1, y: v1, type: "scatter", mode: "lines",
+          name: "1D", line: { color: "rgba(110,168,254,0.95)", width: 2 }
+        });
+      }
+      if (mode === "both" || mode === "7d") {
+        traces.push({
+          x: t7, y: v7, type: "scatter", mode: "lines",
+          name: "7D", line: { color: "rgba(177,151,252,0.95)", width: 2 }
+        });
+      }
+
+      Plotly.newPlot("chartRates", traces, {
+        margin: { l: 44, r: 18, t: 10, b: 36 },
+        paper_bgcolor: "rgba(0,0,0,0)",
+        plot_bgcolor: "rgba(0,0,0,0)",
+        xaxis: { gridcolor: "rgba(232,238,252,.08)", tickfont: { color: "rgba(232,238,252,.72)" } },
+        yaxis: { gridcolor: "rgba(232,238,252,.08)", tickfont: { color: "rgba(232,238,252,.72)" }, ticksuffix: "%" },
+        legend: { font: { color: "rgba(232,238,252,.72)" }, orientation: "h", y: 1.1 },
+        hovermode: "x unified",
+      }, { displayModeBar: false, responsive: true });
+    }
+
+    function plotSpread(spread) {
+      Plotly.newPlot("chartSpread", [{
+        x: spread.map(x => x.t),
+        y: spread.map(x => x.v),
+        type: "scatter", mode: "lines",
+        name: "Spread",
+        line: { color: "rgba(61,220,151,0.95)", width: 2 }
+      }], {
+        margin: { l: 44, r: 18, t: 10, b: 36 },
+        paper_bgcolor: "rgba(0,0,0,0)",
+        plot_bgcolor: "rgba(0,0,0,0)",
+        xaxis: { gridcolor: "rgba(232,238,252,.08)", tickfont: { color: "rgba(232,238,252,.72)" } },
+        yaxis: { gridcolor: "rgba(232,238,252,.08)", tickfont: { color: "rgba(232,238,252,.72)" }, title: { text: "pts", font:{color:"rgba(232,238,252,.55)"} } },
+        hovermode: "x unified",
+      }, { displayModeBar: false, responsive: true });
+    }
+
+    function plotHistogram(series1d, pctls) {
+      const vals = series1d.map(x => x.v).filter(v => typeof v === "number");
+      const p40 = pctls?.p40 ?? null;
+      const p60 = pctls?.p60 ?? null;
+      const p75 = pctls?.p75 ?? null;
+
+      const shapes = [];
+      const addLine = (x, color, name) => {
+        if (x === null || x === undefined) return;
+        shapes.push({
+          type: "line", x0: x, x1: x, y0: 0, y1: 1, xref: "x", yref: "paper",
+          line: { color, width: 2, dash: "dot" }
+        });
+      };
+      addLine(p40, "rgba(255,159,28,.95)");
+      addLine(p60, "rgba(255,209,102,.95)");
+      addLine(p75, "rgba(61,220,151,.95)");
+
+      Plotly.newPlot("chartHist", [{
+        x: vals,
+        type: "histogram",
+        nbinsx: 28,
+        marker: { color: "rgba(110,168,254,.45)" },
+        name: "1D"
+      }], {
+        margin: { l: 44, r: 18, t: 10, b: 36 },
+        paper_bgcolor: "rgba(0,0,0,0)",
+        plot_bgcolor: "rgba(0,0,0,0)",
+        xaxis: { gridcolor: "rgba(232,238,252,.08)", tickfont: { color: "rgba(232,238,252,.72)" }, ticksuffix: "%" },
+        yaxis: { gridcolor: "rgba(232,238,252,.08)", tickfont: { color: "rgba(232,238,252,.72)" } },
+        shapes,
+        annotations: [
+          { x: p40, y: 1, xref:"x", yref:"paper", text:"P40", showarrow:false, yanchor:"bottom", font:{color:"rgba(255,159,28,.95)"} },
+          { x: p60, y: 1, xref:"x", yref:"paper", text:"P60", showarrow:false, yanchor:"bottom", font:{color:"rgba(255,209,102,.95)"} },
+          { x: p75, y: 1, xref:"x", yref:"paper", text:"P75", showarrow:false, yanchor:"bottom", font:{color:"rgba(61,220,151,.95)"} },
+        ].filter(a => a.x !== null && a.x !== undefined && !Number.isNaN(a.x))
+      }, { displayModeBar: false, responsive: true });
+    }
+
+    function plotEvents(events) {
+      const t = (events || []).map(e => e.t);
+      const v = (events || []).map(e => e.v);
+      const txt = (events || []).map(e => `${e.from} → ${e.to}`);
+
+      Plotly.newPlot("chartEvents", [{
+        x: t,
+        y: v,
+        type: "scatter",
+        mode: "markers",
+        marker: { size: 9, color: "rgba(255,209,102,.9)" },
+        text: txt,
+        hovertemplate: "%{x}<br>%{text}<br>%{y:.2f}%<extra></extra>"
+      }], {
+        margin: { l: 44, r: 18, t: 10, b: 36 },
+        paper_bgcolor: "rgba(0,0,0,0)",
+        plot_bgcolor: "rgba(0,0,0,0)",
+        xaxis: { gridcolor: "rgba(232,238,252,.08)", tickfont: { color: "rgba(232,238,252,.72)" } },
+        yaxis: { gridcolor: "rgba(232,238,252,.08)", tickfont: { color: "rgba(232,238,252,.72)" }, ticksuffix:"%" },
+      }, { displayModeBar: false, responsive: true });
+    }
+
+    function render(payload) {
+      document.getElementById("loading")?.remove();
+      buildLayoutSkeleton();
+
+      const k = payload.kpis || {};
+      const pctls = payload.pctls?.["1D"] || {};
+      const band = bandMeta(k.band_1d);
+
+      document.getElementById("subtitle").textContent =
+        `Actualizado: ${fmtDate(k.updated_at)} · Fuente: ${k.source || "—"} · Puntos 1D (60D): ${k.n_1d_60d ?? "—"}`;
+
+      // KPIs
+      document.getElementById("kpi1d").textContent = fmtPct(k.last_1d);
+      document.getElementById("kpi7d").textContent = fmtPct(k.last_7d);
+      document.getElementById("kpiSpread").textContent = (k.spread_7d_1d == null) ? "—" : `${Number(k.spread_7d_1d).toFixed(2)} pts`;
+
+      document.getElementById("kpi1dHint").innerHTML =
+        `P40 ${fmtPct(pctls.p40)} · P60 ${fmtPct(pctls.p60)} · P75 ${fmtPct(pctls.p75)}`;
+
+      document.getElementById("kpi7dHint").textContent = "—";
+
+      document.getElementById("kpiBand").innerHTML =
+        `<span class="badge"><span class="dot ${band.dot}"></span>${band.label}</span>`;
+      document.getElementById("kpiBandHint").textContent =
+        (pctls?.n ? `Ventana percentiles: 60D · n=${pctls.n}` : "Sin histórico suficiente");
+
+      // Footer
+      document.getElementById("footerLeft").textContent =
+        `Generado: ${fmtDate(payload.generated_at)} · CSV: ${payload.meta?.csv_path || "—"}`;
+      document.getElementById("footerRight").innerHTML =
+        `Datos estáticos para GitHub Pages · <a href="${DATA_URL}" target="_blank" rel="noreferrer">Ver JSON</a>`;
+
+      // Data + plots with current controls
+      const rangeSel = document.getElementById("range");
+      const modeSel = document.getElementById("seriesMode");
+
+      function rerenderCharts() {
+        const days = Number(rangeSel.value);
+        const mode = modeSel.value;
+
+        const s1 = filterByDays(payload.data.series["1D"] || [], days);
+        const s7 = filterByDays(payload.data.series["7D"] || [], days);
+        const sp = filterByDays(payload.data.series["spread_7d_1d"] || [], days);
+
+        plotRates(s1, s7, mode);
+        plotSpread(sp);
+
+        // Histograma (ventana 60D por diseño) → usá rango 60D para coherencia
+        const s1_60 = filterByDays(payload.data.series["1D"] || [], 60);
+        plotHistogram(s1_60, pctls);
+
+        // Eventos (no filtra agresivo, pero podés recortar por rango)
+        const ev = filterByDays(payload.events?.band_changes_1d || [], days);
+        plotEvents(ev);
+      }
+
+      rangeSel.addEventListener("change", rerenderCharts);
+      modeSel.addEventListener("change", rerenderCharts);
+
+      rerenderCharts();
+    }
+
+    function renderError(msg) {
+      const root = document.getElementById("root");
+      root.innerHTML = `<div class="error span-12">❌ ${msg}</div>`;
+    }
+
+    fetch(DATA_URL)
       .then(res => {
-        if (!res.ok) throw new Error("No se pudo cargar latest.json");
+        if (!res.ok) throw new Error("No se pudo cargar dashboard.json");
         return res.json();
       })
-      .then(data => {
-        console.log("DATA OK:", data);
-        renderData(data);
+      .then(payload => {
+        console.log("DASH OK:", payload);
+        render(payload);
       })
       .catch(err => {
         console.error(err);
-        renderError("No se pudieron cargar los datos");
+        renderError("No se pudieron cargar los datos. Revisá que exista docs/data/dashboard.json y que GitHub Pages publique /docs.");
       });
   </script>
 </body>
