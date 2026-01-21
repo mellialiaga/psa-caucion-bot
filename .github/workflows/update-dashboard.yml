@@ -1,0 +1,65 @@
+name: Update dashboard (BYMA + history)
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    # Lun–Vie cada 10 minutos (UTC). Ajustalo si querés.
+    - cron: "*/10 * * * 1-5"
+  push:
+    paths:
+      - "caucion_alerta.py"
+      - "requirements.txt"
+      - ".github/workflows/update-dashboard.yml"
+
+concurrency:
+  group: update-dashboard
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip show requests >/dev/null 2>&1 || pip install requests
+
+      - name: Run bot (generate dashboard + history)
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          python caucion_alerta.py
+          echo "---- docs/data ----"
+          ls -la docs/data || true
+
+      - name: Commit & push data files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Trackear solo lo necesario
+          git add docs/data/dashboard.json docs/data/latest.json docs/data/history.csv 2>/dev/null || true
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git commit -m "chore(data): update dashboard + history"
+          git push
