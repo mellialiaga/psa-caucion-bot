@@ -2,13 +2,28 @@
 # -*- coding: utf-8 -*-
 
 """
-PSA Caución Bot – Backend
-Genera docs/data/dashboard.json con el formato esperado por el dashboard PRO.
+PSA Caución Bot – Backend con scraping real BYMA
+Genera docs/data/dashboard.json
 """
 
 import json
 import os
+import requests
 from datetime import datetime, timezone
+
+
+# =========================
+# Config
+# =========================
+
+BYMA_CAUCIONES_URL = "https://open.bymadata.com.ar/vanoms-be-core/rest/api/bymadata/free/cauciones"
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0",
+    "Accept": "application/json"
+}
+
+TIMEOUT = 15
 
 
 # =========================
@@ -29,76 +44,108 @@ def write_json(path: str, payload: dict) -> None:
 
 
 # =========================
-# Payload builder (placeholder)
+# Scraping BYMA
+# =========================
+
+def fetch_bymadata() -> list[dict]:
+    """
+    Devuelve lista cruda de cauciones BYMA.
+    """
+    r = requests.get(BYMA_CAUCIONES_URL, headers=HEADERS, timeout=TIMEOUT)
+    r.raise_for_status()
+    return r.json()
+
+
+def parse_latest_rate(rows: list[dict], plazo_dias: int) -> float | None:
+    """
+    Extrae la última tasa TNA para un plazo dado (1D, 7D).
+    """
+    filtered = [
+        r for r in rows
+        if r.get("plazo") == plazo_dias and r.get("tna") is not None
+    ]
+    if not filtered:
+        return None
+
+    # ordenar por fecha/hora si existe
+    filtered.sort(key=lambda x: x.get("fecha", ""), reverse=True)
+    return float(filtered[0]["tna"])
+
+
+# =========================
+# Payload builder
 # =========================
 
 def build_dashboard_payload() -> dict:
-    """
-    Payload PRO compatible con el dashboard.
-    Más adelante este método se reemplaza por:
-    - scraping real
-    - histórico
-    - percentiles
-    - bandas dinámicas
-    """
-
     now = now_utc_iso()
 
-    # Series en formato { t, v } (timestamp, valor)
-    series_1d = [
-        {"t": now, "v": 30.00}
-    ]
+    try:
+        rows = fetch_bymadata()
 
-    series_7d = [
-        {"t": now, "v": 31.50}
-    ]
+        tna_1d = parse_latest_rate(rows, 1)
+        tna_7d = parse_latest_rate(rows, 7)
 
-    spread_series = [
-        {"t": now, "v": 31.50 - 30.00}
-    ]
+        quality = "ok"
+        source = "BYMA"
 
-    last_1d = series_1d[-1]["v"]
-    last_7d = series_7d[-1]["v"]
+    except Exception as e:
+        print("ERROR scraping BYMA:", e)
+        tna_1d = None
+        tna_7d = None
+        quality = "error"
+        source = "BYMA"
+
+    # Series formato dashboard {t, v}
+    series_1d = []
+    series_7d = []
+    spread_series = []
+
+    if tna_1d is not None:
+        series_1d.append({"t": now, "v": tna_1d})
+
+    if tna_7d is not None:
+        series_7d.append({"t": now, "v": tna_7d})
+
+    if tna_1d is not None and tna_7d is not None:
+        spread_series.append({"t": now, "v": tna_7d - tna_1d})
 
     payload = {
         "generated_at": now,
 
         "meta": {
-            "csv_path": "—",
-            "note": "Datos placeholder. Reemplazar por scraping real."
+            "note": "Datos reales BYMA (snapshot, sin histórico aún)",
         },
 
         "kpis": {
             "updated_at": now,
-            "source": "dummy",
-            "last_1d": last_1d,
-            "last_7d": last_7d,
-            "spread_7d_1d": last_7d - last_1d,
+            "source": source,
+            "last_1d": tna_1d,
+            "last_7d": tna_7d,
+            "spread_7d_1d": (
+                None if tna_1d is None or tna_7d is None
+                else round(tna_7d - tna_1d, 2)
+            ),
             "band_1d": "N/A",
-            "n_1d_60d": len(series_1d)
+            "n_1d_60d": len(series_1d),
         },
 
         "pctls": {
-            # Se completa cuando haya histórico real
-            "1D": {
-                "p40": None,
-                "p60": None,
-                "p75": None,
-                "n": 0
-            }
+            "1D": {"p40": None, "p60": None, "p75": None, "n": 0}
         },
 
         "data": {
             "series": {
                 "1D": series_1d,
                 "7D": series_7d,
-                "spread_7d_1d": spread_series
+                "spread_7d_1d": spread_series,
             }
         },
 
         "events": {
             "band_changes_1d": []
-        }
+        },
+
+        "quality": quality
     }
 
     return payload
@@ -123,6 +170,7 @@ def main() -> None:
     print("OK")
     print(f"- dashboard: {dashboard_path}")
     print(f"- latest:    {latest_path}")
+    print(f"- quality:   {payload['quality']}")
 
 
 if __name__ == "__main__":
