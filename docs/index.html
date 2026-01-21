@@ -91,19 +91,14 @@
     .dot.yellow{ background: var(--yellow); }
     .dot.orange{ background: var(--orange); }
     .dot.red{ background: var(--red); }
-    .chart{
-      height: 340px;
-    }
-    .chartTall{
-      height: 380px;
-    }
+    .chart{ height: 340px; }
+    .chartTall{ height: 380px; }
     .span-3{ grid-column: span 3; }
     .span-4{ grid-column: span 4; }
     .span-5{ grid-column: span 5; }
     .span-6{ grid-column: span 6; }
     .span-7{ grid-column: span 7; }
     .span-12{ grid-column: span 12; }
-
     .footer{
       margin-top: 14px;
       color: var(--muted2);
@@ -121,7 +116,6 @@
       padding: 12px 14px;
       border-radius: 14px;
     }
-
     @media (max-width: 980px){
       body{ padding:18px; }
       .span-3,.span-4,.span-5,.span-6,.span-7{ grid-column: span 12; }
@@ -167,13 +161,10 @@
   </div>
 
   <script>
-    const DATA_URL = "data/dashboard.json"; // ruta relativa (GitHub Pages friendly)
+    const DATA_URL = "data/dashboard.json"; // GitHub Pages: /docs es el root
 
     const fmtPct = (x) => (x === null || x === undefined || Number.isNaN(x)) ? "—" : `${Number(x).toFixed(2)}%`;
-    const fmtNum = (x) => (x === null || x === undefined || Number.isNaN(x)) ? "—" : `${Number(x).toFixed(2)}`;
-    const fmtDate = (iso) => {
-      try { return new Date(iso).toLocaleString(); } catch { return "—"; }
-    };
+    const fmtDate = (iso) => { try { return new Date(iso).toLocaleString(); } catch { return "—"; } };
 
     const bandMeta = (b) => {
       const map = {
@@ -255,6 +246,12 @@
       `;
     }
 
+    function renderError(msg) {
+      const root = document.getElementById("root");
+      root.innerHTML = `<div class="error span-12">❌ ${msg}</div>`;
+      document.getElementById("subtitle").textContent = "Error al cargar datos";
+    }
+
     function filterByDays(arr, days) {
       if (!arr || arr.length === 0) return [];
       const cutoff = Date.now() - days * 24 * 3600 * 1000;
@@ -319,7 +316,7 @@
       const p75 = pctls?.p75 ?? null;
 
       const shapes = [];
-      const addLine = (x, color, name) => {
+      const addLine = (x, color) => {
         if (x === null || x === undefined) return;
         shapes.push({
           type: "line", x0: x, x1: x, y0: 0, y1: 1, xref: "x", yref: "paper",
@@ -384,7 +381,6 @@
       document.getElementById("subtitle").textContent =
         `Actualizado: ${fmtDate(k.updated_at)} · Fuente: ${k.source || "—"} · Puntos 1D (60D): ${k.n_1d_60d ?? "—"}`;
 
-      // KPIs
       document.getElementById("kpi1d").textContent = fmtPct(k.last_1d);
       document.getElementById("kpi7d").textContent = fmtPct(k.last_7d);
       document.getElementById("kpiSpread").textContent = (k.spread_7d_1d == null) ? "—" : `${Number(k.spread_7d_1d).toFixed(2)} pts`;
@@ -399,13 +395,11 @@
       document.getElementById("kpiBandHint").textContent =
         (pctls?.n ? `Ventana percentiles: 60D · n=${pctls.n}` : "Sin histórico suficiente");
 
-      // Footer
       document.getElementById("footerLeft").textContent =
         `Generado: ${fmtDate(payload.generated_at)} · CSV: ${payload.meta?.csv_path || "—"}`;
       document.getElementById("footerRight").innerHTML =
         `Datos estáticos para GitHub Pages · <a href="${DATA_URL}" target="_blank" rel="noreferrer">Ver JSON</a>`;
 
-      // Data + plots with current controls
       const rangeSel = document.getElementById("range");
       const modeSel = document.getElementById("seriesMode");
 
@@ -413,19 +407,18 @@
         const days = Number(rangeSel.value);
         const mode = modeSel.value;
 
-        const s1 = filterByDays(payload.data.series["1D"] || [], days);
-        const s7 = filterByDays(payload.data.series["7D"] || [], days);
-        const sp = filterByDays(payload.data.series["spread_7d_1d"] || [], days);
+        const series = payload?.data?.series || {};
+        const s1 = filterByDays(series["1D"] || [], days);
+        const s7 = filterByDays(series["7D"] || [], days);
+        const sp = filterByDays(series["spread_7d_1d"] || [], days);
 
         plotRates(s1, s7, mode);
         plotSpread(sp);
 
-        // Histograma (ventana 60D por diseño) → usá rango 60D para coherencia
-        const s1_60 = filterByDays(payload.data.series["1D"] || [], 60);
+        const s1_60 = filterByDays(series["1D"] || [], 60);
         plotHistogram(s1_60, pctls);
 
-        // Eventos (no filtra agresivo, pero podés recortar por rango)
-        const ev = filterByDays(payload.events?.band_changes_1d || [], days);
+        const ev = filterByDays(payload?.events?.band_changes_1d || [], days);
         plotEvents(ev);
       }
 
@@ -435,138 +428,19 @@
       rerenderCharts();
     }
 
-    function renderError(msg) {
-      const root = document.getElementById("root");
-      root.innerHTML = `<div class="error span-12">❌ ${msg}</div>`;
-    }
-
-    <script>
-  // === CONFIG ===
-  const DATA_URL = "./data/dashboard.json"; // <- correcto para GitHub Pages con /docs como root
-
-  // === HELPERS ===
-  function toISODateSafe(x) {
-    // Acepta ISO string, timestamp, etc. Devuelve ISO o null.
-    if (!x) return null;
-    const d = new Date(x);
-    if (Number.isNaN(d.getTime())) return null;
-    return d.toISOString();
-  }
-
-  function normalizeDashboard(raw) {
-    // Normaliza raw para que SIEMPRE tenga:
-    // { updated_at, source, series: { "1D":[{date,tna,...}], "7D":[...] } }
-    const nowIso = new Date().toISOString();
-
-    // Caso ideal: ya viene con series
-    if (raw && typeof raw === "object" && raw.series && typeof raw.series === "object") {
-      // Asegurar fechas parseables
-      const series = {};
-      for (const [k, arr] of Object.entries(raw.series)) {
-        series[k] = Array.isArray(arr)
-          ? arr
-              .map(p => ({
-                ...p,
-                date: toISODateSafe(p.date) || toISODateSafe(p.generated_at) || nowIso
-              }))
-              .filter(p => p && p.tna != null)
-          : [];
+    async function boot() {
+      try {
+        const res = await fetch(DATA_URL, { cache: "no-store" });
+        if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
+        const payload = await res.json();
+        render(payload);
+      } catch (e) {
+        console.error(e);
+        renderError("No se pudieron cargar los datos. Revisá que exista data/dashboard.json y que GitHub Pages publique /docs.");
       }
-      return {
-        updated_at: toISODateSafe(raw.updated_at) || toISODateSafe(raw.generated_at) || nowIso,
-        source: raw.source || "unknown",
-        quality: raw.quality || "ok",
-        series
-      };
     }
 
-    // Caso legacy: objeto plano {term,tna,generated_at,...}
-    if (raw && typeof raw === "object" && raw.term && raw.tna != null) {
-      const term = String(raw.term);
-      const point = {
-        date: toISODateSafe(raw.generated_at) || nowIso,
-        tna: raw.tna,
-        tea: raw.tea ?? null,
-        source: raw.source || "unknown",
-        quality: raw.quality || "legacy"
-      };
-      return {
-        updated_at: toISODateSafe(raw.generated_at) || nowIso,
-        source: raw.source || "unknown",
-        quality: raw.quality || "legacy",
-        series: { [term]: [point] }
-      };
-    }
-
-    // Fallback: vacío
-    return {
-      updated_at: nowIso,
-      source: "unknown",
-      quality: "empty",
-      series: { "1D": [] }
-    };
-  }
-
-  async function loadDashboard() {
-    const res = await fetch(DATA_URL, { cache: "no-store" });
-    if (!res.ok) throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
-    const raw = await res.json();
-    console.log("DASH OK:", raw);
-    return normalizeDashboard(raw);
-  }
-
-  function renderHeader(dash) {
-    // Ajustá estos IDs a los tuyos si son distintos:
-    const updatedEl = document.getElementById("updatedAt");
-    const sourceEl = document.getElementById("source");
-    const pointsEl = document.getElementById("points1D");
-
-    if (updatedEl) updatedEl.textContent = dash.updated_at ? new Date(dash.updated_at).toLocaleString() : "--";
-    if (sourceEl) sourceEl.textContent = dash.source || "--";
-    if (pointsEl) pointsEl.textContent = (dash.series?.["1D"]?.length ?? 0).toString();
-  }
-
-  function renderCharts(dash) {
-    // ✅ Acá evitamos el crash: si no existe, usamos {}.
-    const series = dash.series || {};
-    const s1d = series["1D"] || [];
-    const s7d = series["7D"] || [];
-
-    // TODO: reemplazá esto por tu lógica real de chart
-    // pero ya con s1d/s7d garantizados como arrays.
-    // Ejemplo: imprimir primero y último
-    console.log("1D points:", s1d.length, s1d[0], s1d[s1d.length - 1]);
-    console.log("7D points:", s7d.length);
-
-    // Si tu chart usa un formato específico, convertís acá.
-    // Por ahora, el objetivo es: NO CRASHEAR.
-  }
-
-  function showError(msg) {
-    const errEl = document.getElementById("errorBox");
-    if (errEl) {
-      errEl.style.display = "block";
-      errEl.textContent = msg;
-    }
-  }
-
-  function hideError() {
-    const errEl = document.getElementById("errorBox");
-    if (errEl) errEl.style.display = "none";
-  }
-
-  // === BOOT ===
-  (async function boot() {
-    try {
-      hideError();
-      const dash = await loadDashboard();
-      renderHeader(dash);
-      renderCharts(dash);
-    } catch (e) {
-      console.error(e);
-      showError("No se pudieron cargar los datos. Revisá que exista docs/data/dashboard.json y que GitHub Pages publique /docs.");
-    }
-  })();
-</script>
+    boot();
+  </script>
 </body>
 </html>
