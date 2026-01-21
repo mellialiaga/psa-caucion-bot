@@ -440,19 +440,133 @@
       root.innerHTML = `<div class="error span-12">❌ ${msg}</div>`;
     }
 
-    fetch(DATA_URL)
-      .then(res => {
-        if (!res.ok) throw new Error("No se pudo cargar dashboard.json");
-        return res.json();
-      })
-      .then(payload => {
-        console.log("DASH OK:", payload);
-        render(payload);
-      })
-      .catch(err => {
-        console.error(err);
-        renderError("No se pudieron cargar los datos. Revisá que exista docs/data/dashboard.json y que GitHub Pages publique /docs.");
-      });
-  </script>
+    <script>
+  // === CONFIG ===
+  const DATA_URL = "./data/dashboard.json"; // <- correcto para GitHub Pages con /docs como root
+
+  // === HELPERS ===
+  function toISODateSafe(x) {
+    // Acepta ISO string, timestamp, etc. Devuelve ISO o null.
+    if (!x) return null;
+    const d = new Date(x);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toISOString();
+  }
+
+  function normalizeDashboard(raw) {
+    // Normaliza raw para que SIEMPRE tenga:
+    // { updated_at, source, series: { "1D":[{date,tna,...}], "7D":[...] } }
+    const nowIso = new Date().toISOString();
+
+    // Caso ideal: ya viene con series
+    if (raw && typeof raw === "object" && raw.series && typeof raw.series === "object") {
+      // Asegurar fechas parseables
+      const series = {};
+      for (const [k, arr] of Object.entries(raw.series)) {
+        series[k] = Array.isArray(arr)
+          ? arr
+              .map(p => ({
+                ...p,
+                date: toISODateSafe(p.date) || toISODateSafe(p.generated_at) || nowIso
+              }))
+              .filter(p => p && p.tna != null)
+          : [];
+      }
+      return {
+        updated_at: toISODateSafe(raw.updated_at) || toISODateSafe(raw.generated_at) || nowIso,
+        source: raw.source || "unknown",
+        quality: raw.quality || "ok",
+        series
+      };
+    }
+
+    // Caso legacy: objeto plano {term,tna,generated_at,...}
+    if (raw && typeof raw === "object" && raw.term && raw.tna != null) {
+      const term = String(raw.term);
+      const point = {
+        date: toISODateSafe(raw.generated_at) || nowIso,
+        tna: raw.tna,
+        tea: raw.tea ?? null,
+        source: raw.source || "unknown",
+        quality: raw.quality || "legacy"
+      };
+      return {
+        updated_at: toISODateSafe(raw.generated_at) || nowIso,
+        source: raw.source || "unknown",
+        quality: raw.quality || "legacy",
+        series: { [term]: [point] }
+      };
+    }
+
+    // Fallback: vacío
+    return {
+      updated_at: nowIso,
+      source: "unknown",
+      quality: "empty",
+      series: { "1D": [] }
+    };
+  }
+
+  async function loadDashboard() {
+    const res = await fetch(DATA_URL, { cache: "no-store" });
+    if (!res.ok) throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
+    const raw = await res.json();
+    console.log("DASH OK:", raw);
+    return normalizeDashboard(raw);
+  }
+
+  function renderHeader(dash) {
+    // Ajustá estos IDs a los tuyos si son distintos:
+    const updatedEl = document.getElementById("updatedAt");
+    const sourceEl = document.getElementById("source");
+    const pointsEl = document.getElementById("points1D");
+
+    if (updatedEl) updatedEl.textContent = dash.updated_at ? new Date(dash.updated_at).toLocaleString() : "--";
+    if (sourceEl) sourceEl.textContent = dash.source || "--";
+    if (pointsEl) pointsEl.textContent = (dash.series?.["1D"]?.length ?? 0).toString();
+  }
+
+  function renderCharts(dash) {
+    // ✅ Acá evitamos el crash: si no existe, usamos {}.
+    const series = dash.series || {};
+    const s1d = series["1D"] || [];
+    const s7d = series["7D"] || [];
+
+    // TODO: reemplazá esto por tu lógica real de chart
+    // pero ya con s1d/s7d garantizados como arrays.
+    // Ejemplo: imprimir primero y último
+    console.log("1D points:", s1d.length, s1d[0], s1d[s1d.length - 1]);
+    console.log("7D points:", s7d.length);
+
+    // Si tu chart usa un formato específico, convertís acá.
+    // Por ahora, el objetivo es: NO CRASHEAR.
+  }
+
+  function showError(msg) {
+    const errEl = document.getElementById("errorBox");
+    if (errEl) {
+      errEl.style.display = "block";
+      errEl.textContent = msg;
+    }
+  }
+
+  function hideError() {
+    const errEl = document.getElementById("errorBox");
+    if (errEl) errEl.style.display = "none";
+  }
+
+  // === BOOT ===
+  (async function boot() {
+    try {
+      hideError();
+      const dash = await loadDashboard();
+      renderHeader(dash);
+      renderCharts(dash);
+    } catch (e) {
+      console.error(e);
+      showError("No se pudieron cargar los datos. Revisá que exista docs/data/dashboard.json y que GitHub Pages publique /docs.");
+    }
+  })();
+</script>
 </body>
 </html>
