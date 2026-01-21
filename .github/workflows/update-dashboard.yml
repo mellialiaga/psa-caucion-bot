@@ -7,7 +7,7 @@ on:
     - cron: "*/10 * * * 1-5"
   push:
     paths:
-      - "caucion_alerta.py"
+      - "scripts/caucion_alerta.py"
       - "requirements.txt"
       - ".github/workflows/update-dashboard.yml"
 
@@ -44,7 +44,7 @@ jobs:
         env:
           PYTHONUNBUFFERED: "1"
         run: |
-          python caucion_alerta.py
+          python scripts/caucion_alerta.py
           echo "---- docs/data ----"
           ls -la docs/data || true
 
