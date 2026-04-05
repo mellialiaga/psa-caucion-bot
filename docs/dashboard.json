@@ -1,0 +1,33 @@
+{
+  "generated_at": "2026-01-01T00:00:00+00:00",
+  "quality": "pending",
+  "meta": {
+    "csv_path": "docs/data/history.csv",
+    "total_rows": 0,
+    "pctl_window_days": 60,
+    "lookback_days": 180
+  },
+  "kpis": {
+    "updated_at": null,
+    "source": "BYMA",
+    "last_1d": null,
+    "last_7d": null,
+    "spread_7d_1d": null,
+    "band_1d": "N/A",
+    "n_1d_60d": 0
+  },
+  "pctls": {
+    "1D": { "n": 0 }
+  },
+  "data": {
+    "series": {
+      "1D": [],
+      "7D": [],
+      "spread_7d_1d": []
+    },
+    "last": {}
+  },
+  "events": {
+    "band_changes_1d": []
+  }
+}
