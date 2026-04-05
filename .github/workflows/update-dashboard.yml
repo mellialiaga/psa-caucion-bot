@@ -1,0 +1,74 @@
+name: Update dashboard (BYMA + history)
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    # Lun–Vie cada 10 minutos entre las 11 y 17 hs AR (14:00–20:00 UTC)
+    - cron: "*/10 14-20 * * 1-5"
+  push:
+    paths:
+      - "caucion_alerta.py"
+      - "requirements.txt"
+      - ".github/workflows/update-dashboard.yml"
+
+concurrency:
+  group: update-dashboard
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run bot (scraping + histórico + dashboard + alertas)
+        env:
+          PYTHONUNBUFFERED: "1"
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          USERS_JSON: ${{ secrets.USERS_JSON }}
+          NOTIFY_ON_BAND_CHANGE_ONLY: "1"
+          SPREAD_ALERT_MIN: "0.50"
+          DEDUP_MINUTES: "30"
+          PCTL_WINDOW_DAYS: "60"
+          LOOKBACK_DAYS: "180"
+        run: |
+          python caucion_alerta.py
+          echo "──── docs/data/ ────"
+          ls -lh docs/data/ || true
+
+      - name: Commit & push data files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add docs/data/dashboard.json \
+                  docs/data/history.csv \
+                  docs/data/state.json \
+                  2>/dev/null || true
+
+          if git diff --cached --quiet; then
+            echo "Sin cambios para commitear."
+            exit 0
+          fi
+
+          git commit -m "chore(data): update dashboard + history [$(date -u '+%Y-%m-%d %H:%M UTC')]"
+          git push
