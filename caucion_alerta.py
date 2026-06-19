@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -110,7 +111,8 @@ def make_byma_session() -> requests.Session:
     s = requests.Session()
     s.headers.update(BYMA_HEADERS)
     try:
-        s.get(BYMA_DASHBOARD_URL, timeout=TIMEOUT, verify=False)
+        # Usar la URL base (sin fragmento #) para que el servidor pueda enviar cookies
+        s.get("https://open.bymadata.com.ar/", timeout=TIMEOUT, verify=False)
         log.info("Sesión BYMA inicializada (cookies OK)")
     except Exception as e:
         log.warning("No se pudo inicializar sesión BYMA: %s", e)
@@ -118,9 +120,11 @@ def make_byma_session() -> requests.Session:
 
 
 def fetch_byma_cauciones(session: requests.Session) -> list:
+    # FIX: usar json={} en vez de data='{"Content-Type":...}'
+    # El body anterior enviaba basura como cuerpo del POST — BYMA lo rechazaba o devolvía vacío.
     resp = session.post(
         BYMA_CAUCIONES_URL,
-        data='{"Content-Type":"application/json"}',
+        json={},
         timeout=TIMEOUT,
         verify=False,
     )
@@ -135,6 +139,21 @@ def fetch_byma_cauciones(session: requests.Session) -> list:
                 log.info("Respuesta como dict, usando clave '%s'", key)
                 return data[key]
         log.warning("Estructura inesperada de la API: keys=%s", list(data.keys()))
+    return []
+
+
+def fetch_byma_cauciones_with_retry(session: requests.Session, max_retries: int = 3) -> list:
+    """Wrapper con reintentos: si BYMA devuelve 0 rows, vuelve a intentar."""
+    for attempt in range(1, max_retries + 1):
+        try:
+            rows = fetch_byma_cauciones(session)
+            if rows:
+                return rows
+            log.warning("BYMA devolvió 0 rows (intento %d/%d)", attempt, max_retries)
+        except Exception as e:
+            log.warning("Error en intento %d/%d: %s", attempt, max_retries, e)
+        if attempt < max_retries:
+            time.sleep(5)
     return []
 
 
@@ -434,6 +453,12 @@ def format_alert(tna_1d, tna_7d, band, pctls, spread, capital) -> str:
 def should_notify(band_1d: str, state: dict) -> tuple:
     prev_band = state.get("last_band", "")
     last_iso = state.get("last_notify_at", "")
+
+    # Cambio de banda siempre notifica, sin importar el dedup
+    if prev_band and band_1d != prev_band:
+        return True, f"cambio de banda: {prev_band} → {band_1d}"
+
+    # Dedup: si ya se notificó hace menos de DEDUP_MINUTES, no volver a notificar
     if last_iso:
         try:
             diff = datetime.now(timezone.utc) - datetime.fromisoformat(last_iso)
@@ -441,8 +466,7 @@ def should_notify(band_1d: str, state: dict) -> tuple:
                 return False, f"dedup ({int(diff.total_seconds()/60)}m < {DEDUP_MINUTES}m)"
         except Exception:
             pass
-    if prev_band and band_1d != prev_band:
-        return True, f"cambio de banda: {prev_band} → {band_1d}"
+
     if not NOTIFY_ON_BAND_CHANGE:
         return True, "modo siempre-notificar"
     return False, "sin cambio de banda"
@@ -463,7 +487,7 @@ def main() -> None:
 
     try:
         session = make_byma_session()
-        raw_rows = fetch_byma_cauciones(session)
+        raw_rows = fetch_byma_cauciones_with_retry(session)
         session.close()
         log.info("Rows recibidos de BYMA: %d", len(raw_rows))
 
