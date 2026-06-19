@@ -137,7 +137,7 @@ def fetch_byma_cauciones(session):
             if key in data and isinstance(data[key], list):
                 log.info("Respuesta como dict, usando clave '%s'", key)
                 return data[key]
-        log.warning("Estructura inesperada de la API: keys=%s", list(data.keys()))
+        log.warning("Estructura inesperada de la API: claves=%s", list(data.keys()))
     return []
 
 
@@ -205,7 +205,7 @@ def parse_rates(rows):
 # Histórico CSV
 # ══════════════════════════════════════════════
 
-CSV_FIELDS = ["timestamp", "source", "term", "tna"]
+CSV_FIELDS= ["timestamp", "source", "term", "tna"]
 
 
 def load_history():
@@ -424,11 +424,11 @@ def format_alert(tna_1d, tna_7d, band, pctls, spread, capital):
     lines = ["<b>PSA Caucion Bot</b>", f"Hora: {hora} hs AR", ""]
     band_emoji = {"EXCELENTE": "EXCELENTE", "BUENA": "BUENA", "ACEPTABLE": "ACEPTABLE", "BAJA": "BAJA"}.get(band, band)
     if tna_1d is not None:
-        lines.append(f"[{band_emoji}] <b>1D:</b> {tna_1d:.2f}% TNA")
+        lines.append(f"[{band_emojh}] <b>1D:</b> {tna_1d:.2f}% TNA")
     if tna_7d is not None:
         lines.append(f"<b>7D:</b> {tna_7d:.2f}% TNA")
     if spread is not None:
-        lines.append(f"<b>Spread 7D-1D:</b> {spread:+.2f}%")
+        lines.append(f"<b>Spread 7D-1D:</b> {spread:+2f}%")
 
     p40 = pctls.get("p40")
     if p40 is not None:
@@ -438,7 +438,7 @@ def format_alert(tna_1d, tna_7d, band, pctls, spread, capital):
 
     if capital and tna_1d is not None:
         renta = capital * tna_1d / 100 / 365
-        lines += ["", f"Renta diaria est.: <b>${renta:,.0f}</b>"]
+        lines += ["", f"Renta diaria est.: k{renta:,.0f}"]
 
     return "\n".join(lines)
 
@@ -456,7 +456,7 @@ def should_notify(band_1d, state):
         try:
             diff = datetime.now(timezone.utc) - datetime.fromisoformat(last_iso)
             if diff.total_seconds() < DEDUP_MINUTES * 60:
-                return False, f"dedup ({int(diff.total_seconds()/60)}m < {DEDUP_MINUTES}m)"
+                return False, f"dedup ({int(diff.total_seconds()/60)}m < {DEDUM_MINUTES}m)"
         except Exception:
             pass
 
