@@ -35,7 +35,6 @@ log = logging.getLogger("caucion")
 # Config
 # ══════════════════════════════════════════════
 
-BYMA_DASHBOARD_URL = "https://open.bymadata.com.ar/#/dashboard"
 BYMA_CAUCIONES_URL = (
     "https://open.bymadata.com.ar/vanoms-be-core/rest/api/bymadata/free/cauciones"
 )
@@ -80,20 +79,20 @@ DEDUP_MINUTES            = int(os.getenv("DEDUP_MINUTES", "30"))
 # Utilidades
 # ══════════════════════════════════════════════
 
-def now_ar() -> datetime:
+def now_ar():
     return datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=-3)))
 
-def now_utc_iso() -> str:
+def now_utc_iso():
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
-def ensure_dir(path: str) -> None:
+def ensure_dir(path):
     os.makedirs(path, exist_ok=True)
 
-def write_json(path: str, obj: dict) -> None:
+def write_json(path, obj):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False, indent=2)
 
-def load_json(path: str, default=None):
+def load_json(path, default=None):
     if not os.path.exists(path):
         return default
     try:
@@ -107,21 +106,21 @@ def load_json(path: str, default=None):
 # Scraping BYMA
 # ══════════════════════════════════════════════
 
-def make_byma_session() -> requests.Session:
+def make_byma_session():
     s = requests.Session()
     s.headers.update(BYMA_HEADERS)
     try:
-        # Usar la URL base (sin fragmento #) para que el servidor pueda enviar cookies
+        # FIX: URL base sin fragmento # para que el servidor pueda enviar cookies
         s.get("https://open.bymadata.com.ar/", timeout=TIMEOUT, verify=False)
-        log.info("Sesión BYMA inicializada (cookies OK)")
+        log.info("Sesion BYMA inicializada (cookies OK)")
     except Exception as e:
-        log.warning("No se pudo inicializar sesión BYMA: %s", e)
+        log.warning("No se pudo inicializar sesion BYMA: %s", e)
     return s
 
 
-def fetch_byma_cauciones(session: requests.Session) -> list:
-    # FIX: usar json={} en vez de data='{"Content-Type":...}'
-    # El body anterior enviaba basura como cuerpo del POST — BYMA lo rechazaba o devolvía vacío.
+def fetch_byma_cauciones(session):
+    # FIX: json={} en vez de data='{"Content-Type":"application/json"}'
+    # El body anterior enviaba basura — BYMA lo rechazaba o devolvía vacío.
     resp = session.post(
         BYMA_CAUCIONES_URL,
         json={},
@@ -142,14 +141,14 @@ def fetch_byma_cauciones(session: requests.Session) -> list:
     return []
 
 
-def fetch_byma_cauciones_with_retry(session: requests.Session, max_retries: int = 3) -> list:
-    """Wrapper con reintentos: si BYMA devuelve 0 rows, vuelve a intentar."""
+def fetch_byma_cauciones_with_retry(session, max_retries=3):
+    """Reintenta hasta max_retries veces si BYMA devuelve 0 rows."""
     for attempt in range(1, max_retries + 1):
         try:
             rows = fetch_byma_cauciones(session)
             if rows:
                 return rows
-            log.warning("BYMA devolvió 0 rows (intento %d/%d)", attempt, max_retries)
+            log.warning("BYMA devolvio 0 rows (intento %d/%d)", attempt, max_retries)
         except Exception as e:
             log.warning("Error en intento %d/%d: %s", attempt, max_retries, e)
         if attempt < max_retries:
@@ -157,7 +156,7 @@ def fetch_byma_cauciones_with_retry(session: requests.Session, max_retries: int 
     return []
 
 
-def normalize_term(row: dict) -> Optional[int]:
+def normalize_term(row):
     for field in ("plazo", "term", "termDays", "days", "denominationTerm", "plazoDias"):
         val = row.get(field)
         if val is not None:
@@ -168,7 +167,7 @@ def normalize_term(row: dict) -> Optional[int]:
     return None
 
 
-def normalize_tna(row: dict) -> Optional[float]:
+def normalize_tna(row):
     for field in ("tna", "rate", "interestRate", "tasaNominalAnual", "annualRate", "lastPrice"):
         val = row.get(field)
         if val is not None:
@@ -176,7 +175,6 @@ def normalize_tna(row: dict) -> Optional[float]:
                 v = float(str(val).strip())
                 if v <= 0:
                     continue
-                # Convertir de fracción a porcentaje si viene como 0.35 en vez de 35.0
                 if 0 < v < 2:
                     v = v * 100
                 return round(v, 4)
@@ -185,8 +183,8 @@ def normalize_tna(row: dict) -> Optional[float]:
     return None
 
 
-def parse_rates(rows: list) -> dict:
-    buckets: dict[int, list[float]] = {}
+def parse_rates(rows):
+    buckets = {}
     for row in rows:
         plazo = normalize_term(row)
         tna = normalize_tna(row)
@@ -196,7 +194,7 @@ def parse_rates(rows: list) -> dict:
 
     log.info("Plazos detectados en la API: %s", sorted(buckets.keys()))
 
-    result: dict[int, float] = {}
+    result = {}
     for plazo, tnas in buckets.items():
         result[plazo] = round(sum(tnas) / len(tnas), 4)
 
@@ -210,7 +208,7 @@ def parse_rates(rows: list) -> dict:
 CSV_FIELDS = ["timestamp", "source", "term", "tna"]
 
 
-def load_history() -> list[dict]:
+def load_history():
     if not os.path.exists(HISTORY_CSV):
         return []
     rows = []
@@ -237,9 +235,9 @@ def load_history() -> list[dict]:
     return rows
 
 
-def append_history(new_rows: list[dict]) -> int:
+def append_history(new_rows):
     ensure_dir(DATA_DIR)
-    existing_keys: set[tuple] = set()
+    existing_keys = set()
     file_exists = os.path.exists(HISTORY_CSV)
     if file_exists:
         with open(HISTORY_CSV, newline="", encoding="utf-8") as f:
@@ -265,7 +263,7 @@ def append_history(new_rows: list[dict]) -> int:
 # Percentiles y bandas
 # ══════════════════════════════════════════════
 
-def quantile(values: list, q: float) -> Optional[float]:
+def quantile(values, q):
     if not values:
         return None
     v = sorted(values)
@@ -275,7 +273,7 @@ def quantile(values: list, q: float) -> Optional[float]:
     return v[lo] * (1 - (pos - lo)) + v[hi] * (pos - lo)
 
 
-def compute_percentiles(values: list) -> dict:
+def compute_percentiles(values):
     n = len(values)
     if n < MIN_POINTS_FOR_PCTLS:
         return {"n": n}
@@ -287,7 +285,7 @@ def compute_percentiles(values: list) -> dict:
     }
 
 
-def classify_band(tna: Optional[float], pctls: dict) -> str:
+def classify_band(tna, pctls):
     if tna is None:
         return "N/A"
     p40 = pctls.get("p40")
@@ -308,7 +306,7 @@ def classify_band(tna: Optional[float], pctls: dict) -> str:
 # Series y dashboard
 # ══════════════════════════════════════════════
 
-def build_series(rows: list, lookback_days: int) -> dict:
+def build_series(rows, lookback_days):
     if not rows:
         return {"series": {"1D": [], "7D": [], "spread_7d_1d": []}, "last": {}}
 
@@ -353,7 +351,7 @@ def build_series(rows: list, lookback_days: int) -> dict:
     }
 
 
-def build_dashboard(tna_1d, tna_7d, rows: list, quality: str) -> dict:
+def build_dashboard(tna_1d, tna_7d, rows, quality):
     now = now_utc_iso()
     cutoff_pctls = datetime.now(timezone.utc) - timedelta(days=PCTL_WINDOW_DAYS)
     vals_1d = [r["tna"] for r in rows if r["term"] == "1D" and r["ts"] >= cutoff_pctls]
@@ -393,7 +391,7 @@ def build_dashboard(tna_1d, tna_7d, rows: list, quality: str) -> dict:
 # Telegram
 # ══════════════════════════════════════════════
 
-def send_telegram(token: str, chat_id: str, text: str) -> bool:
+def send_telegram(token, chat_id, text):
     try:
         r = requests.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
@@ -408,57 +406,52 @@ def send_telegram(token: str, chat_id: str, text: str) -> bool:
         return False
 
 
-def get_users() -> list:
+def get_users():
     if USERS_JSON_RAW:
         try:
             data = json.loads(USERS_JSON_RAW)
             if isinstance(data, list):
                 return data
         except Exception as e:
-            log.warning("USERS_JSON inválido: %s", e)
+            log.warning("USERS_JSON invalido: %s", e)
     if TG_CHAT_ID:
         return [{"name": "Usuario", "chat_id": TG_CHAT_ID, "capital": None}]
     return []
 
 
-def format_alert(tna_1d, tna_7d, band, pctls, spread, capital) -> str:
+def format_alert(tna_1d, tna_7d, band, pctls, spread, capital):
     hora = now_ar().strftime("%H:%M")
-    lines = [
-        "<b>🧾 PSA Caución Bot</b>",
-        f"🕐 {hora} hs AR",
-        "",
-    ]
-    band_emoji = {"EXCELENTE": "🚀", "BUENA": "✅", "ACEPTABLE": "🟡", "BAJA": "🔴"}.get(band, "📌")
+    lines = ["<b>PSA Caucion Bot</b>", f"Hora: {hora} hs AR", ""]
+    band_emoji = {"EXCELENTE": "EXCELENTE", "BUENA": "BUENA", "ACEPTABLE": "ACEPTABLE", "BAJA": "BAJA"}.get(band, band)
     if tna_1d is not None:
-        lines.append(f"{band_emoji} <b>1D:</b> {tna_1d:.2f}% TNA  [{band}]")
+        lines.append(f"[{band_emoji}] <b>1D:</b> {tna_1d:.2f}% TNA")
     if tna_7d is not None:
-        lines.append(f"📌 <b>7D:</b> {tna_7d:.2f}% TNA")
+        lines.append(f"<b>7D:</b> {tna_7d:.2f}% TNA")
     if spread is not None:
-        emoji = "🚀" if spread >= SPREAD_ALERT_MIN else "➡️"
-        lines.append(f"{emoji} <b>Spread 7D-1D:</b> {spread:+.2f}%")
+        lines.append(f"<b>Spread 7D-1D:</b> {spread:+.2f}%")
 
     p40 = pctls.get("p40")
     if p40 is not None:
         n = pctls.get("n", 0)
-        lines += ["", f"📊 Percentiles 60d (n={n}):",
+        lines += ["", f"Percentiles 60d (n={n}):",
                   f"   p40={p40:.2f}%  p60={pctls['p60']:.2f}%  p75={pctls['p75']:.2f}%"]
 
     if capital and tna_1d is not None:
         renta = capital * tna_1d / 100 / 365
-        lines += ["", f"💰 Renta diaria est.: <b>${renta:,.0f}</b>"]
+        lines += ["", f"Renta diaria est.: <b>${renta:,.0f}</b>"]
 
     return "\n".join(lines)
 
 
-def should_notify(band_1d: str, state: dict) -> tuple:
+def should_notify(band_1d, state):
     prev_band = state.get("last_band", "")
     last_iso = state.get("last_notify_at", "")
 
-    # Cambio de banda siempre notifica, sin importar el dedup
+    # FIX: cambio de banda siempre notifica, sin importar el dedup
     if prev_band and band_1d != prev_band:
-        return True, f"cambio de banda: {prev_band} → {band_1d}"
+        return True, f"cambio de banda: {prev_band} -> {band_1d}"
 
-    # Dedup: si ya se notificó hace menos de DEDUP_MINUTES, no volver a notificar
+    # Dedup: si ya se notifico hace menos de DEDUP_MINUTES, no volver a notificar
     if last_iso:
         try:
             diff = datetime.now(timezone.utc) - datetime.fromisoformat(last_iso)
@@ -476,13 +469,12 @@ def should_notify(band_1d: str, state: dict) -> tuple:
 # Main
 # ══════════════════════════════════════════════
 
-def main() -> None:
+def main():
     ensure_dir(DATA_DIR)
-    log.info("═══ PSA Caución Bot — inicio ═══")
+    log.info("PSA Caucion Bot - inicio")
 
-    # 1. Scraping BYMA
-    tna_1d: Optional[float] = None
-    tna_7d: Optional[float] = None
+    tna_1d = None
+    tna_7d = None
     quality = "error"
 
     try:
@@ -509,7 +501,6 @@ def main() -> None:
 
     log.info("TNA 1D=%s  7D=%s  quality=%s", tna_1d, tna_7d, quality)
 
-    # 2. Append histórico
     now_iso = now_utc_iso()
     new_rows = []
     if tna_1d is not None:
@@ -518,20 +509,17 @@ def main() -> None:
         new_rows.append({"timestamp": now_iso, "source": "BYMA", "term": "7D", "tna": tna_7d})
 
     appended = append_history(new_rows)
-    log.info("Filas nuevas en histórico: %d", appended)
+    log.info("Filas nuevas en historico: %d", appended)
 
-    # 3. Leer histórico completo
     all_rows = load_history()
-    log.info("Total filas en histórico: %d", len(all_rows))
+    log.info("Total filas en historico: %d", len(all_rows))
 
-    # 4. Generar dashboard.json completo
     payload = build_dashboard(tna_1d, tna_7d, all_rows, quality)
     write_json(DASHBOARD_JSON, payload)
-    log.info("Dashboard escrito → %s", DASHBOARD_JSON)
+    log.info("Dashboard escrito -> %s", DASHBOARD_JSON)
 
-    # 5. Alertas Telegram
     if not TG_BOT_TOKEN:
-        log.info("TG_BOT_TOKEN no seteado — omitiendo alertas.")
+        log.info("TG_BOT_TOKEN no seteado - omitiendo alertas.")
     elif quality == "ok":
         state = load_json(STATE_FILE, {})
         band_1d = payload["kpis"]["band_1d"]
@@ -550,13 +538,12 @@ def main() -> None:
                     tna_1d, tna_7d, band_1d, pctls_1d, spread, user.get("capital")
                 )
                 ok = send_telegram(TG_BOT_TOKEN, chat_id, texto)
-                log.info("Telegram → %s: %s", user.get("name", chat_id), "OK" if ok else "FAIL")
+                log.info("Telegram -> %s: %s", user.get("name", chat_id), "OK" if ok else "FAIL")
 
             state.update({"last_band": band_1d, "last_notify_at": now_iso,
                           "last_1d": tna_1d, "last_7d": tna_7d})
             write_json(STATE_FILE, state)
 
-    # 6. Resumen
     log.info("quality=%s | 1D=%s | 7D=%s | band=%s | rows=%d",
              quality, tna_1d, tna_7d, payload["kpis"]["band_1d"], len(all_rows))
 
